@@ -1,0 +1,43 @@
+{
+  "schemaVersion": 1,
+  "status": "mapped_awaiting_credentials",
+  "checkedOn": "2026-11-05",
+  "project": "trader-scale-486213",
+  "location": "europe-west3",
+  "businessTimezone": "Europe/London",
+  "commerceTimezone": "UTC",
+  "snapshotEndpoint": "/api/bi/snapshot",
+  "screens": {
+    "accounts": {
+      "label": "Account Analytics",
+      "state": "query_ready",
+      "sources": ["trader_scale.src_prop_accounts", "trader_scale.src_prop_accounts_detail", "trader_scale.fct_account_analytics"]
+    },
+    "payouts": {
+      "label": "Payouts",
+      "state": "query_ready",
+      "sources": ["trader_scale.src_payouts", "trader_scale.dim_customers", "trader_scale.src_prop_accounts"]
+    },
+    "affiliates": {
+      "label": "Affiliates",
+      "state": "query_ready",
+      "sources": ["trader_scale.fct_affiliate_order_attribution", "trader_scale.fct_commerce_orders", "trader_scale.dim_affiliate_identity"]
+    },
+    "customers": {
+      "label": "Customer value",
+      "state": "mapped",
+      "sources": ["trader_scale.dim_commerce_customers", "trader_scale.bridge_commerce_customer_orders", "trader_scale.fct_commerce_orders"]
+    },
+    "risk": {
+      "label": "Risk Radar",
+      "state": "schema_validation_required",
+      "sources": ["trader_scale.rule04_martingale_daily", "trader_scale.rule05_grid_daily", "trader_scale.rule06_adding_in_drawdown_daily", "trader_scale_app.breach_reviews"]
+    },
+    "profitability": {
+      "label": "Owner Overview & Profitability",
+      "state": "blocked_on_cost_coverage",
+      "sources": ["trader_scale.fct_commerce_orders", "trader_scale.account_profitability"]
+    }
+  }
+}
+
