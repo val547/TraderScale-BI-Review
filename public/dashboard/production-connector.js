@@ -35,6 +35,7 @@
     window.BIData.productionQuality = payload.quality || {};
     state.mode = 'production';
     state.snapshot = payload;
+    window.dispatchEvent(new Event('bi:production-ready'));
     window.dispatchEvent(new HashChangeEvent('hashchange'));
     return true;
   }
