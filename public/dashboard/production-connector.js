@@ -33,6 +33,15 @@
     window.BIData.currency = payload.currency || 'USD';
     window.BIData.demo = false;
     window.BIData.productionQuality = payload.quality || {};
+    window.BIData.filterAccounts = function (filters) {
+      filters = filters || {};
+      return window.BIData.accounts.filter(function (account) {
+        return (!filters.programme || filters.programme === 'all' || account.programme === filters.programme)
+          && (!filters.size || filters.size === 'all' || Number(account.accountSize) === Number(filters.size))
+          && (!filters.country || filters.country === 'all' || account.country === filters.country)
+          && (!filters.channel || filters.channel === 'all' || account.channel === filters.channel);
+      });
+    };
     state.mode = 'production';
     state.snapshot = payload;
     window.dispatchEvent(new Event('bi:production-ready'));
