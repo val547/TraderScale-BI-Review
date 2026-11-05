@@ -1,0 +1,23 @@
+# Dependencies and generated output
+/node_modules/
+/dist/
+/.next/
+/.vinext/
+/out/
+next-env.d.ts
+*.tsbuildinfo
+
+# Local secrets and runtime state
+.env*
+.dev.vars*
+*.pem
+/.wrangler/
+/.sites-runtime/
+
+# Publication scratch space
+/outputs/
+/work/
+
+# Logs and OS metadata
+npm-debug.log*
+.DS_Store

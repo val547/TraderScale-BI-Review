@@ -43,8 +43,11 @@
     var badge = document.querySelector('.demo-badge');
     if (!badge) return;
     if (state.mode === 'production') {
-      badge.textContent = 'LIVE DATA';
-      badge.title = 'Production snapshot loaded through the read-only BI API.';
+      var partial = state.snapshot && state.snapshot.quality && state.snapshot.quality.partial === true;
+      badge.textContent = partial ? 'LIVE · PARTIAL' : 'LIVE DATA';
+      badge.title = partial
+        ? 'Live production data is enabled for selected screens. Open Data health for coverage details.'
+        : 'Production snapshot loaded through the read-only BI API.';
     } else if (state.manifest) {
       badge.textContent = 'DEMO FALLBACK';
       badge.title = 'Production sources are mapped. Read-only credentials or a Warehouse API are still required.';

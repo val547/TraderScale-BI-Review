@@ -2,10 +2,11 @@
 
 ## Current state
 
-The application is prepared to load a same-origin JSON snapshot from
-`GET /api/bi/snapshot`. No BigQuery credentials or Warehouse API URL are stored
-in this repository. If the endpoint is absent, slow, invalid, or reports demo
-data, the embedded fictional dataset stays active.
+The private Site loads a same-origin JSON snapshot from `GET /api/bi/snapshot`.
+The endpoint uses a read-only BigQuery service account stored as a Sites runtime
+secret; no credential is stored in this repository or exposed to the browser.
+Account Analytics and Payouts are live. If the endpoint is unavailable or the
+snapshot fails validation, the embedded fictional dataset remains available.
 
 The provider-native BigQuery connector is currently disabled by the workspace
 administrator. Deployment therefore needs one of these read-only paths:
@@ -20,8 +21,8 @@ JSON, IP address, address or phone number in frontend code or Git.
 
 | Screen | Production source | Connection state |
 | --- | --- | --- |
-| Account Analytics | latest `src_prop_accounts`, `src_prop_accounts_detail`, `fct_account_analytics` | Query ready; API credentials missing |
-| Payouts | latest `src_payouts`, latest customer/account dimensions | Query ready; API credentials missing |
+| Account Analytics | latest `src_prop_accounts`, `src_prop_accounts_detail`, `fct_account_analytics` | Live; latest 200 records |
+| Payouts | latest `src_payouts`, latest customer/account dimensions | Live; latest 200 records |
 | Affiliates | `fct_affiliate_order_attribution` + `fct_commerce_orders` | Query ready; API credentials missing |
 | Customer value | canonical commerce bridges/orders + latest payouts | Contract mapped |
 | Risk Radar | rule detector tables + `breach_reviews/actions/hidden` | Contract mapped; detector schemas must be validated live |

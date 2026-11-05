@@ -2,10 +2,11 @@
 
 Private TraderScale business-intelligence application.
 
-The published UI currently uses its embedded demonstration dataset. A production
-data adapter is included and probes `/api/bi/snapshot`; it switches compatible
-datasets in place only when a validated snapshot is returned. Until the API is
-available, the interface clearly remains in demo-fallback mode.
+The private published UI now loads live Account Analytics and Payouts through a
+server-side, read-only BigQuery adapter at `/api/bi/snapshot`. The Google service
+account is stored only as a Sites runtime secret. Other screens retain their
+embedded demonstration data until their aggregate production contracts are
+completed, and the interface labels this state as `LIVE · PARTIAL`.
 
 ## Production data
 
@@ -19,8 +20,9 @@ API contract, deployment requirements and safety rules.
 
 ## Files
 
-- `dist/index.html` — portable BI application.
-- `dist/production-connector.js` — production snapshot loader with demo fallback.
-- `dist/data/connection-manifest.json` — machine-readable source mapping.
+- `public/dashboard/index.html` — portable BI application embedded by the Site.
+- `public/dashboard/production-connector.js` — production snapshot loader with demo fallback.
+- `public/dashboard/data/connection-manifest.json` — machine-readable source mapping.
+- `app/api/bi/snapshot/route.ts` — authenticated server-side BigQuery snapshot API.
 - `sql/` — read-only GoogleSQL query templates for the first production screens.
 

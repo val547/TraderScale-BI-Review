@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "status": "mapped_awaiting_credentials",
+  "status": "live_partial",
   "checkedOn": "2026-11-05",
   "project": "trader-scale-486213",
   "location": "europe-west3",
@@ -10,12 +10,12 @@
   "screens": {
     "accounts": {
       "label": "Account Analytics",
-      "state": "query_ready",
+      "state": "live",
       "sources": ["trader_scale.src_prop_accounts", "trader_scale.src_prop_accounts_detail", "trader_scale.fct_account_analytics"]
     },
     "payouts": {
       "label": "Payouts",
-      "state": "query_ready",
+      "state": "live",
       "sources": ["trader_scale.src_payouts", "trader_scale.dim_customers", "trader_scale.src_prop_accounts"]
     },
     "affiliates": {
