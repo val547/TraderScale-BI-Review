@@ -26,3 +26,14 @@ API contract, deployment requirements and safety rules.
 - `app/api/bi/snapshot/route.ts` — authenticated server-side BigQuery snapshot API.
 - `sql/` — read-only GoogleSQL query templates for the first production screens.
 
+## Railway
+
+Railway uses `Dockerfile.railway` and `railway.toml`. Configure these production
+variables in the Railway service:
+
+- `GOOGLE_SERVICE_ACCOUNT_JSON` — secret JSON for the read-only warehouse account.
+- `BI_ACCESS_PASSWORD` — private dashboard password, at least 16 characters.
+
+The public health check is `/health`; all dashboard files and the BI snapshot API
+are protected by an HttpOnly session cookie.
+

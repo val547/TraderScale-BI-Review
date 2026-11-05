@@ -5,10 +5,10 @@ const credentialPath = process.argv[2];
 if (!credentialPath) throw new Error('Credential path is required.');
 
 const credential = JSON.parse(await readFile(credentialPath, 'utf8'));
-const routeSource = await readFile(new URL('../app/api/bi/snapshot/route.ts', import.meta.url), 'utf8');
+const snapshotSource = await readFile(new URL('../lib/bi-snapshot.ts', import.meta.url), 'utf8');
 const sqlFor = (name) => {
   const tick = String.fromCharCode(96);
-  const match = routeSource.match(new RegExp(`const ${name} = String\\.raw${tick}([\\s\\S]*?)${tick};`));
+  const match = snapshotSource.match(new RegExp(`const ${name} = ${tick}([\\s\\S]*?)${tick};`));
   if (!match) throw new Error(`Missing ${name}.`);
   return match[1].replaceAll('\\`', '`');
 };
