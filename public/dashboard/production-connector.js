@@ -372,6 +372,11 @@
     return state.dateAllTime ? 'All time' : humanDate(state.dateStart) + ' – ' + humanDate(state.dateEnd);
   }
 
+  function dateRange() {
+    var bounds = dateBounds();
+    return state.dateAllTime ? [bounds.min, bounds.max] : [state.dateStart, state.dateEnd];
+  }
+
   function dateToolbar() {
     var bounds = dateBounds();
     var start = state.dateAllTime ? bounds.min : state.dateStart;
@@ -719,7 +724,12 @@
       [/cash paid/gi, 'approved payout volume'],
       [/settled payments/gi, 'approved payouts'],
       [/payment settlement dates/gi, 'approval dates'],
-      [/settlement dates/gi, 'approval dates']
+      [/settlement dates/gi, 'approval dates'],
+      [/demo record/gi, 'live warehouse record'],
+      [/\bdemonstration\b/gi, 'live'],
+      [/\bfictional\b/gi, 'live'],
+      [/\bdemo\b/gi, 'live'],
+      [/\bsample data\b/gi, 'live warehouse data']
     ];
     var root = document.getElementById('page-content');
     if (!root) return;
@@ -918,7 +928,7 @@
     finishBoot();
   }
 
-  window.BIProductionConnector = { state: state, applySnapshot: applySnapshot, start: start, inDateRange: inDateRange, dateLabel: dateLabel, refreshPresentation: refreshPresentation };
+  window.BIProductionConnector = { state: state, applySnapshot: applySnapshot, start: start, inDateRange: inDateRange, dateLabel: dateLabel, dateRange: dateRange, refreshPresentation: refreshPresentation };
   document.addEventListener('click', function (event) {
     var pageLink = event.target.closest('[data-page]');
     if (pageLink) {
