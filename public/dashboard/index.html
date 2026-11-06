@@ -7607,7 +7607,8 @@ if (location.protocol !== 'file:') document.documentElement.classList.add('produ
   }
   function revenueFor(ctx,source,state,windows,filters){
     const available=Array.isArray(source.orders),partners=new Map(unique(ctx.data.affiliates).map(a=>[clean(a.id),a]));
-    const unfilteredRows=unique(source.orders).filter(challengePurchase).map(order=>({...order,...orderAttribution(order,ctx.data,partners),id:clean(order.id),customerId:clean(order.customerId),date:validDate(order.date),netKnown:hasNumber(order.netSales)}));
+    const sourceOrders=unique(source.orders),qualifyingOrders=source.extendedDemo===false?sourceOrders:sourceOrders.filter(challengePurchase);
+    const unfilteredRows=qualifyingOrders.map(order=>({...order,...orderAttribution(order,ctx.data,partners),id:clean(order.id),customerId:clean(order.customerId),date:validDate(order.date),netKnown:hasNumber(order.netSales)}));
     const rows=unfilteredRows.filter(order=>matches(order,filters,state));
     const invalidDates=rows.filter(o=>!o.date).length,dated=rows.filter(o=>o.date&&o.date<=windows.asOf);
     const aggregate=range=>{const selected=dated.filter(o=>o.date>=range[0]&&o.date<=range[1]),netKnown=selected.every(o=>o.netKnown),netSales=sum(selected.filter(o=>o.netKnown),'netSales'),status=!available?'unavailable':invalidDates||!netKnown?'incomplete':netSales===0?'zero':netSales<0?'negative':'available';return {rows:selected,orders:selected.length,clients:new Set(selected.map(o=>o.customerId)).size,netSales,grossSales:sum(selected,'grossSales'),discounts:sum(selected,'discount'),refunds:sum(selected,'refund'),chargebacks:sum(selected,'chargeback'),invalidNet:selected.filter(o=>!o.netKnown).length,invalidDates,componentsKnown:selected.every(o=>['grossSales','discount','refund','chargeback'].every(k=>hasNumber(o[k]))),status,known:available&&!invalidDates&&netKnown};};
