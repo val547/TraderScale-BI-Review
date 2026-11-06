@@ -220,7 +220,7 @@
       + '<div class="page-kpis">' + metric('Attributed net revenue', money(sum(rows.filter(function (r) { return r.status === 'attributed'; }), 'netRevenue')), 'Production v6 attribution')
       + metric('Affiliate orders', number(sum(rows.filter(function (r) { return r.status === 'attributed'; }), 'orders')), 'Attributed eligible orders')
       + metric('New customers', number(sum(rows.filter(function (r) { return r.status === 'attributed'; }), 'newCustomers')), 'First-ever canonical orders')
-      + metric('Conflicts retained', number(sum(rows, 'conflictOrders')), 'Attribution evidence conflicts') + '</div>'
+      + metric('Unattributed orders', number(sum(rows.filter(function (r) { return r.status !== 'attributed'; }), 'orders')), 'Eligible orders without attributed status') + '</div>'
       + '<section class="panel"><div class="panel-header"><div><h2 class="panel-title">Affiliate performance</h2>'
       + '<p class="panel-subtitle">fct_affiliate_order_attribution joined at canonical order grain.</p></div></div><div class="table-wrap">'
       + '<table class="data-table"><thead><tr><th>Affiliate</th><th>Status</th><th class="numeric">Orders</th><th class="numeric">Customers</th>'
