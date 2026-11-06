@@ -216,6 +216,41 @@
     };
   }
 
+  function installProductionSources() {
+    function sourceFor(data) {
+      var orders = (Array.isArray(data.orders) ? data.orders : []).filter(function (row) { return inDateRange(row.date); });
+      var dates = orders.map(function (row) { return isoDate(row.date); }).filter(Boolean).sort();
+      var payouts = (Array.isArray(data.payouts) ? data.payouts : []).filter(function (row) { return inDateRange(row.requestedAt); });
+      return {
+        orders: orders,
+        customers: Array.isArray(data.customers) ? data.customers : [],
+        payouts: payouts,
+        historyStart: state.dateAllTime ? (dates[0] || data.asOf) : state.dateStart,
+        asOf: state.dateAllTime ? data.asOf : state.dateEnd,
+        extendedDemo: false,
+        sourceNote: 'Live production warehouse history.'
+      };
+    }
+    if (window.BICustomerValueData) window.BICustomerValueData.getData = sourceFor;
+    if (window.BIMonthlyCohortsData) window.BIMonthlyCohortsData.getData = function (data) { return sourceFor(data); };
+    if (window.BIPayoutOutcomesData) window.BIPayoutOutcomesData.getData = function (source, data) {
+      var rows = (source && source.payouts || data && data.payouts || []).filter(function (row) { return row.status === 'Rejected'; });
+      var rejected = rows.map(function (row) {
+        return Object.assign({}, row, {
+          requestedAmount: row.amount,
+          rejectedAt: row.rejectedAt || row.decisionAt || '',
+          reason: row.reason || 'Reason not recorded',
+          simulated: false,
+          rejectionSource: 'Production payout record'
+        });
+      });
+      return { rejected: rejected, historyStart: source && source.historyStart || data.asOf, asOf: data.asOf,
+        available: true, complete: false, illustrative: false, sourceNote: 'Live recorded rejection decisions.' };
+    };
+    // ThoughtMetric is a separate source and is not part of the current warehouse snapshot.
+    window.BIThoughtMetricData = null;
+  }
+
   function applySnapshot(payload) {
     if (!validSnapshot(payload) || !window.BIData) return false;
     var data = payload.data;
@@ -233,6 +268,7 @@
     window.BIData.asOf = payload.asOf;
     window.BIData.currency = payload.currency || 'USD';
     window.BIData.productionQuality = payload.quality || {};
+    installProductionSources();
     state.mode = 'production';
     window.dispatchEvent(new Event('bi:production-ready'));
     window.dispatchEvent(new HashChangeEvent('hashchange'));
@@ -662,6 +698,32 @@
     dateControl.setAttribute('data-live-date-view', key);
   }
 
+  function sanitizeProductionCopy() {
+    if (state.mode !== 'production') return;
+    var periodContext = document.querySelector('.filter-tail .period-context');
+    if (periodContext) periodContext.textContent = dateLabel() + ' · UTC';
+    var replacements = [
+      [/Demo import/gi, 'No live source'],
+      [/Extended fictional history/gi, 'Live warehouse history'],
+      [/fictional history/gi, 'live warehouse history'],
+      [/Demo decision history/gi, 'Live decision history'],
+      [/sample decisions/gi, 'recorded decisions'],
+      [/sample partners/gi, 'partners'],
+      [/this sample/gi, 'the live warehouse'],
+      [/demo ledger/gi, 'live ledger'],
+      [/fictional purchase ledger/gi, 'live purchase ledger']
+    ];
+    var root = document.getElementById('page-content');
+    if (!root) return;
+    var walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    var node;
+    while ((node = walker.nextNode())) {
+      var value = node.nodeValue;
+      replacements.forEach(function (item) { value = value.replace(item[0], item[1]); });
+      if (value !== node.nodeValue) node.nodeValue = value;
+    }
+  }
+
   function decorateBadge() {
     var badge = document.querySelector('.demo-badge');
     if (!badge) return;
@@ -704,6 +766,7 @@
     injectStyles();
     decorateBadge();
     enforceProductionView();
+    sanitizeProductionCopy();
   }
 
   async function start() {
@@ -726,7 +789,7 @@
     refreshPresentation();
   }
 
-  window.BIProductionConnector = { state: state, applySnapshot: applySnapshot, start: start };
+  window.BIProductionConnector = { state: state, applySnapshot: applySnapshot, start: start, inDateRange: inDateRange, dateLabel: dateLabel };
   document.addEventListener('click', function (event) {
     var pageLink = event.target.closest('[data-page]');
     if (pageLink) {
@@ -749,7 +812,7 @@
       return;
     }
     var button = event.target.closest('[data-production-action]');
-    if (!button) return;
+    if (!button) { setTimeout(refreshPresentation, 0); return; }
     var action = button.getAttribute('data-production-action');
     if (action === 'toggle-date-picker') {
       state.datePickerOpen = !state.datePickerOpen;
@@ -783,6 +846,7 @@
     var summary = document.getElementById('live-date-summary');
     if (summary && start && end && start.value && end.value) summary.textContent = humanDate(start.value) + ' – ' + humanDate(end.value);
   });
+  document.addEventListener('change', function () { setTimeout(refreshPresentation, 0); });
   window.addEventListener('hashchange', function () { setTimeout(refreshPresentation, 0); });
   var refreshScheduled = false;
   new MutationObserver(function () {

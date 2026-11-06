@@ -170,6 +170,7 @@ function payoutStatus(value: unknown) {
   const source = text(value).toLowerCase();
   if (source.includes("paid") || source.includes("complete") || source.includes("processed")) return "Paid";
   if (source.includes("approv")) return "Approved";
+  if (source.includes("reject") || source.includes("declin")) return "Rejected";
   return "Under review";
 }
 
@@ -394,6 +395,10 @@ export async function buildSnapshot(serviceAccountJson: string) {
     country: text(row.country, "Unknown"), channel: "Unknown",
     amount: number(row.share_amount || row.request_amount), requestedAt: date(row.requested_at),
     status: payoutStatus(row.status), method: "Restricted",
+    approvedAt: payoutStatus(row.status) === "Approved" ? date(row.approved_at) : "",
+    paidAt: payoutStatus(row.status) === "Paid" ? date(row.updated_at) : "",
+    rejectedAt: payoutStatus(row.status) === "Rejected" ? date(row.updated_at) : "",
+    decisionAt: ["Approved", "Paid", "Rejected"].includes(payoutStatus(row.status)) ? date(row.updated_at) : "",
   }));
 
   const orders = orderRows.map((row) => ({
