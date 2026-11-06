@@ -192,7 +192,7 @@ function productPlan(row: Record<string, unknown>, accountSize?: unknown) {
 
 function accountStage(row: Record<string, unknown>) {
   const source = `${text(row.status)} ${text(row.plan)} ${text(row.plan_category_name)}`.toLowerCase();
-  if (row.breached_at || source.includes("breach")) return "Breached";
+  if (source.includes("breach")) return "Breached";
   if (source.includes("funded") || source.includes("funding") || source.includes("live") || source.includes("instant")) return "Funded";
   if (source.includes("pass")) return "Passed";
   return "Evaluation";
@@ -218,7 +218,7 @@ function challengePhase(row: Record<string, unknown>, stage: string) {
 
 function accountStatus(row: Record<string, unknown>) {
   const source = text(row.status).toLowerCase();
-  if (row.breached_at || source.includes("breach")) return "Breached";
+  if (source.includes("breach")) return "Breached";
   if (source.includes("clos") || source.includes("disable") || source.includes("inactive")) return "Closed";
   return "Active";
 }
