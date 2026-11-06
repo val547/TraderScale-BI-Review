@@ -249,6 +249,22 @@
         + '</strong></td><td>' + escapeHtml(liveText(row.lastOrderAt)) + '</td></tr>'; }).join('') + '</tbody></table></div></section>';
   }
 
+  function reportsPage() {
+    var reports = [
+      ['overview', 'Owner overview', 'Canonical orders, revenue and customer mix'],
+      ['revenue', 'Profitability', 'Attempt revenue, approved payouts and gross profit'],
+      ['accounts', 'Account Analytics', 'Current accounts and trading results'],
+      ['pipeline', 'Payouts', 'Payout requests and amounts'],
+      ['affiliates', 'Affiliates', 'Canonical order attribution and revenue'],
+      ['ltv', 'Customer value', 'Commerce customer orders, value and activity']
+    ];
+    return '<section class="panel"><div class="panel-header"><div><h2 class="panel-title">Live reports</h2>'
+      + '<p class="panel-subtitle">Only reports backed by connected warehouse tables are listed.</p></div></div><div class="connection-list">'
+      + reports.map(function (report) { return '<button class="connection-row" data-page="' + report[0] + '"><span class="connection-icon">●</span>'
+        + '<div class="connection-text"><strong>' + escapeHtml(report[1]) + '</strong><span>' + escapeHtml(report[2])
+        + '</span></div><span class="badge badge-success">OPEN</span></button>'; }).join('') + '</div></section>';
+  }
+
   function noLiveDataPage(page) {
     var labels = {
       overview: 'Owner overview', revenue: 'Profitability', affiliates: 'Affiliates',
@@ -337,6 +353,7 @@
     else if (page === 'revenue' && state.snapshot.quality.profitabilityReady) content.innerHTML = profitabilityPage();
     else if (page === 'affiliates' && state.snapshot.quality.affiliatesReady) content.innerHTML = affiliatesPage();
     else if (page === 'ltv' && state.snapshot.quality.customersReady) content.innerHTML = customersPage();
+    else if (page === 'reports') content.innerHTML = reportsPage();
     else if (page === 'accounts') content.innerHTML = accountsPage();
     else if (page === 'pipeline') content.innerHTML = payoutsPage();
     else if (page === 'health') content.innerHTML = healthPage();

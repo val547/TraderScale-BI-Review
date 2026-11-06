@@ -289,7 +289,12 @@ ORDER BY order_reporting_date DESC, order_id
 `;
 
 const PROFITABILITY_SQL = `
-SELECT COALESCE(plan, 'Unknown') AS plan, COALESCE(SAFE_CAST(plan_size AS NUMERIC), 0) AS plan_size,
+SELECT COALESCE(plan, 'Unknown') AS plan,
+  COALESCE(
+    SAFE_CAST(NULLIF(REGEXP_REPLACE(plan_size, r'[^0-9.]', ''), '') AS NUMERIC)
+      * IF(REGEXP_CONTAINS(UPPER(plan_size), r'K'), 1000, 1),
+    0
+  ) AS plan_size,
   COUNT(*) AS attempts, COUNTIF(reached_funded) AS funded_attempts,
   SUM(COALESCE(revenue, 0)) AS revenue,
   SUM(COALESCE(discount, 0)) AS discount,
@@ -297,7 +302,7 @@ SELECT COALESCE(plan, 'Unknown') AS plan, COALESCE(SAFE_CAST(plan_size AS NUMERI
   SUM(COALESCE(payouts, 0)) AS payouts,
   SUM(COALESCE(gross_profit, 0)) AS gross_profit
 FROM \`trader-scale-486213.trader_scale.account_profitability\`
-GROUP BY plan, plan_size
+GROUP BY 1, 2
 ORDER BY revenue DESC
 `;
 
@@ -314,7 +319,7 @@ SELECT COALESCE(a.affiliate_id, 'unattributed') AS affiliate_id,
   COUNTIF(a.is_new_customer_order) AS new_customers,
   SUM(o.gross_revenue_usd) AS gross_revenue,
   SUM(o.net_revenue_usd) AS net_revenue,
-  COUNTIF(a.conflict_state IS NOT NULL) AS conflict_orders
+  COUNTIF(NULLIF(TRIM(a.conflict_state), '') IS NOT NULL) AS conflict_orders
 FROM eligible_orders AS o
 LEFT JOIN \`trader-scale-486213.trader_scale.fct_affiliate_order_attribution\` AS a
   USING (store_id, order_id)
