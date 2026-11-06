@@ -36,7 +36,7 @@
 
   function discardDemoData() {
     if (!window.BIData) return;
-    ['orders', 'affiliates', 'customers', 'riskCases'].forEach(function (key) {
+    ['orders', 'affiliates', 'customers', 'accounts', 'payouts', 'riskCases'].forEach(function (key) {
       if (Array.isArray(window.BIData[key])) window.BIData[key].length = 0;
     });
     window.BIData.demo = false;
@@ -44,7 +44,7 @@
 
   function rebuildLiveDimensions() {
     var data = window.BIData;
-    var rows = data.accounts.concat(data.payouts);
+    var rows = data.accounts.concat(data.payouts, data.orders || []);
     replaceArray(data.programmes, unique(rows.map(function (row) { return row.programme; })).sort());
     replaceArray(data.countries, unique(rows.map(function (row) { return row.country; })).sort());
     replaceArray(data.channels, unique(rows.map(function (row) { return row.channel; })).sort());
@@ -52,22 +52,188 @@
       .filter(Boolean).sort(function (a, b) { return a - b; });
   }
 
+  function initials(value) {
+    return String(value || '').split(/\s+/).filter(Boolean).slice(0, 2)
+      .map(function (part) { return part.charAt(0).toUpperCase(); }).join('') || '—';
+  }
+
+  function adaptSnapshotData(payload) {
+    var data = payload.data;
+    var accountsById = {};
+    data.accounts.forEach(function (row) { accountsById[String(row.id)] = row; });
+    var customerProfiles = {};
+    (data.customers || []).forEach(function (row) { customerProfiles[String(row.id)] = row; });
+    var attributionByOrder = {};
+    (data.affiliates || []).forEach(function (row) { attributionByOrder[String(row.storeId) + ':' + String(row.orderId)] = row; });
+
+    var affiliateProfiles = {};
+    (data.affiliates || []).forEach(function (row) {
+      if (!row.id || row.id === 'unattributed' || row.status !== 'attributed') return;
+      if (!affiliateProfiles[row.id]) affiliateProfiles[row.id] = {
+        id: row.id, name: row.name, initials: initials(row.name), country: 'Unknown',
+        retainer: null, commissionRate: null, trafficType: 'unrecorded', trafficTypeLabel: 'Type not recorded'
+      };
+    });
+
+    var orders = (data.orders || []).filter(function (row) { return row.revenueEligible; }).map(function (row) {
+      var attribution = attributionByOrder[row.id] || null;
+      var account = attribution && attribution.accountIds
+        ? attribution.accountIds.map(function (id) { return accountsById[String(id)]; }).find(Boolean)
+        : null;
+      var profile = customerProfiles[row.customerId] || {};
+      var affiliateId = attribution && attribution.status === 'attributed' ? attribution.id : null;
+      if (account) {
+        account.orderId = row.id;
+        account.channel = affiliateId ? 'Affiliate' : 'Unknown';
+        account.affiliateId = affiliateId;
+      }
+      return {
+        id: row.id, date: row.date, customerId: row.customerId,
+        customerName: profile.name || (account && account.customerName) || 'No live data',
+        programme: account ? account.programme : 'Unknown', accountSize: account ? account.accountSize : 0,
+        accountId: account ? account.id : '', country: row.country || profile.country || 'Unknown',
+        channel: affiliateId ? 'Affiliate' : 'Unknown', affiliateId: affiliateId,
+        affiliateTrafficType: affiliateId ? 'unrecorded' : null,
+        grossSales: Number(row.grossRevenue) || 0, discount: 0, refund: Number(row.refunded) || 0,
+        chargeback: 0, pspFee: null, platformCost: null, acquisitionCost: null,
+        commission: null, payoutCost: null, netSales: Number(row.netRevenue) || 0,
+        contribution: null, isNewCustomer: !!row.isNewCustomer, liveCostCoverage: false
+      };
+    });
+
+    var orderRollups = {};
+    orders.forEach(function (row) {
+      if (!orderRollups[row.customerId]) orderRollups[row.customerId] = { spend: 0, orders: 0, last: '', first: row.date, programme: row.programme };
+      var rollup = orderRollups[row.customerId];
+      rollup.spend += row.netSales;
+      rollup.orders += 1;
+      if (row.date > rollup.last) rollup.last = row.date;
+      if (row.date < rollup.first) rollup.first = row.date;
+      if (rollup.programme === 'Unknown' && row.programme !== 'Unknown') rollup.programme = row.programme;
+    });
+    var customers = (data.customers || []).map(function (row) {
+      var rollup = orderRollups[row.id] || {};
+      return {
+        id: row.id, name: row.name, email: '', country: row.country,
+        firstPurchase: row.firstOrderAt, programme: rollup.programme || 'Unknown', stage: row.status,
+        accounts: row.accountCount, lastActive: row.lastOrderAt, totalSpend: Number(row.revenue) || 0,
+        orderCount: row.completedOrderCount, kycVerified: row.kycVerified
+      };
+    });
+    return { orders: orders, customers: customers, affiliates: Object.keys(affiliateProfiles).map(function (key) { return affiliateProfiles[key]; }) };
+  }
+
+  function installLiveCalculations() {
+    var data = window.BIData;
+    function selected(filters) {
+      filters = filters || {};
+      return data.orders.filter(function (row) {
+        return inDateRange(row.date)
+          && (!filters.programme || filters.programme === 'all' || row.programme === filters.programme)
+          && (!filters.country || filters.country === 'all' || row.country === filters.country)
+          && (!filters.channel || filters.channel === 'all' || row.channel === filters.channel)
+          && (!filters.size || filters.size === 'all' || Number(row.accountSize) === Number(filters.size));
+      });
+    }
+    function total(rows, field) { return rows.reduce(function (value, row) { return value + (Number(row[field]) || 0); }, 0); }
+    data.filterOrders = selected;
+    data.getMetrics = function (filters) {
+      var rows = selected(filters);
+      return {
+        netSales: total(rows, 'netSales'), contribution: null, refunds: total(rows, 'refund'), chargebacks: total(rows, 'chargeback'),
+        commissions: null, acquisitionCosts: null, pspFees: null, platformCosts: null, payoutCosts: null,
+        grossSales: total(rows, 'grossSales'), discounts: total(rows, 'discount'), orders: rows.length,
+        newCustomers: new Set(rows.filter(function (row) { return row.isNewCustomer; }).map(function (row) { return row.customerId; })).size,
+        customers: new Set(rows.map(function (row) { return row.customerId; }).filter(Boolean)).size,
+        liveCostCoverage: false
+      };
+    };
+    data.getSeries = function (filters) {
+      var buckets = {};
+      selected(filters).forEach(function (row) {
+        if (!buckets[row.date]) buckets[row.date] = { date: row.date, netSales: 0, contribution: null };
+        buckets[row.date].netSales += row.netSales;
+      });
+      return Object.keys(buckets).sort().map(function (key) { return buckets[key]; });
+    };
+    data.getProducts = function (filters) {
+      var groups = {};
+      selected(filters).forEach(function (row) {
+        if (!groups[row.programme]) groups[row.programme] = { name: row.programme, netSales: 0, contribution: null, orders: 0, margin: null };
+        groups[row.programme].netSales += row.netSales;
+        groups[row.programme].orders += 1;
+      });
+      return Object.keys(groups).map(function (key) { return groups[key]; }).sort(function (a, b) { return b.netSales - a.netSales; });
+    };
+    data.getAffiliates = function (filters) {
+      return data.affiliates.map(function (affiliate) {
+        var rows = selected(filters).filter(function (row) { return row.affiliateId === affiliate.id; });
+        var newRows = rows.filter(function (row) { return row.isNewCustomer; });
+        return Object.assign({}, affiliate, {
+          netSales: total(rows, 'netSales'), contribution: null,
+          newCustomers: new Set(newRows.map(function (row) { return row.customerId; })).size,
+          commission: null, acquisitionCost: null, payoutCost: null, refunds: total(rows, 'refund'),
+          orders: rows.length, cac: null, ltv: null, margin: null
+        });
+      }).filter(function (affiliate) { return affiliate.orders > 0; }).sort(function (a, b) { return b.netSales - a.netSales; });
+    };
+    data.getCustomers = function (filters) {
+      var ids = new Set(selected(filters).map(function (row) { return row.customerId; }));
+      return data.customers.filter(function (row) { return ids.has(row.id); }).sort(function (a, b) { return b.totalSpend - a.totalSpend; });
+    };
+    data.filterAccounts = function (filters) {
+      filters = filters || {};
+      return data.accounts.filter(function (row) {
+        return inDateRange(row.openedAt)
+          && (!filters.programme || filters.programme === 'all' || row.programme === filters.programme)
+          && (!filters.country || filters.country === 'all' || row.country === filters.country)
+          && (!filters.channel || filters.channel === 'all' || row.channel === filters.channel)
+          && (!filters.size || filters.size === 'all' || Number(row.accountSize) === Number(filters.size))
+          && (!filters.accountStage || filters.accountStage === 'all' || row.stage === filters.accountStage);
+      });
+    };
+    data.getAccountGroups = function (filters, groupBy) {
+      var key = groupBy === 'accountSize' ? 'accountSize' : 'programme';
+      var orderMap = {};
+      data.orders.forEach(function (row) { orderMap[row.id] = row; });
+      var groups = {};
+      data.filterAccounts(filters).forEach(function (row) {
+        var name = row[key];
+        if (!groups[name]) groups[name] = { name: name, accounts: 0, active: 0, funded: 0, breached: 0, netSales: 0, contribution: null, realizedPnl: 0, openPnl: 0, payoutAccrued: 0, approvedPayouts: 0, highRisk: 0 };
+        var group = groups[name], order = orderMap[row.orderId];
+        group.accounts += 1;
+        if (row.status === 'Active') group.active += 1;
+        if (row.stage === 'Funded') group.funded += 1;
+        if (row.stage === 'Breached') group.breached += 1;
+        if (order) group.netSales += Number(order.netSales) || 0;
+        group.realizedPnl += Number(row.realizedPnl) || 0;
+        group.openPnl += Number(row.openPnl) || 0;
+        group.payoutAccrued += Number(row.payoutAccrued) || 0;
+        group.approvedPayouts += Number(row.payoutApproved) || 0;
+        if (row.status === 'Active' && row.riskLevel === 'High') group.highRisk += 1;
+      });
+      return Object.keys(groups).map(function (keyName) { return groups[keyName]; });
+    };
+  }
+
   function applySnapshot(payload) {
     if (!validSnapshot(payload) || !window.BIData) return false;
     var data = payload.data;
     if (!Array.isArray(data.accounts) || !Array.isArray(data.payouts)) return false;
     discardDemoData();
+    state.snapshot = payload;
+    var adapted = adaptSnapshotData(payload);
     replaceArray(window.BIData.accounts, data.accounts);
     replaceArray(window.BIData.payouts, data.payouts);
-    ['orders', 'affiliates', 'customers'].forEach(function (key) {
-      if (Array.isArray(data[key])) replaceArray(window.BIData[key], data[key]);
-    });
+    replaceArray(window.BIData.orders, adapted.orders);
+    replaceArray(window.BIData.affiliates, adapted.affiliates);
+    replaceArray(window.BIData.customers, adapted.customers);
     rebuildLiveDimensions();
+    installLiveCalculations();
     window.BIData.asOf = payload.asOf;
     window.BIData.currency = payload.currency || 'USD';
     window.BIData.productionQuality = payload.quality || {};
     state.mode = 'production';
-    state.snapshot = payload;
     window.dispatchEvent(new Event('bi:production-ready'));
     window.dispatchEvent(new HashChangeEvent('hashchange'));
     return true;
@@ -485,26 +651,15 @@
 
   function enforceProductionView() {
     var page = currentPage();
-    var content = document.getElementById('page-content');
-    if (!content || (!DATA_PAGES.has(page) && page !== 'health')) return;
-    var viewKey = state.mode + ':' + page + ':' + (state.snapshot ? state.snapshot.asOf : '')
-      + ':' + state.dateAllTime + ':' + state.dateStart + ':' + state.dateEnd + ':' + state.datePickerOpen;
-    if (content.getAttribute('data-production-view') === viewKey
-        && content.querySelector(':scope > [data-production-root]')) return;
-    hideLegacyControls(page);
-    if (state.mode !== 'production') content.innerHTML = loadingPage();
-    else if (page === 'overview' && state.snapshot.quality.revenueReady) content.innerHTML = ownerOverviewPage();
-    else if (page === 'revenue' && state.snapshot.quality.profitabilityReady) content.innerHTML = profitabilityPage();
-    else if (page === 'affiliates' && state.snapshot.quality.affiliatesReady) content.innerHTML = affiliatesPage();
-    else if (page === 'ltv' && state.snapshot.quality.customersReady) content.innerHTML = customersPage();
-    else if (page === 'reports') content.innerHTML = reportsPage();
-    else if (page === 'accounts') content.innerHTML = accountsPage();
-    else if (page === 'pipeline') content.innerHTML = payoutsPage();
-    else if (page === 'health') content.innerHTML = healthPage();
-    else if (page === 'settings') content.innerHTML = settingsPage();
-    else content.innerHTML = noLiveDataPage(page);
-    content.setAttribute('data-production-view', viewKey);
-    if (content.firstElementChild) content.firstElementChild.setAttribute('data-production-root', '');
+    var dateControl = document.querySelector('.date-control');
+    if (!dateControl || state.mode !== 'production') return;
+    var datedPages = new Set(['overview', 'revenue', 'accounts', 'pipeline', 'affiliates', 'competitors', 'pricing', 'rebuy', 'updates', 'ltv', 'client-profit', 'journey', 'profitable-risk', 'risk-radar', 'payout-exposure', 'payout-consistency']);
+    if (!datedPages.has(page)) return;
+    dateControl.hidden = false;
+    var key = state.dateAllTime + ':' + state.dateStart + ':' + state.dateEnd + ':' + state.datePickerOpen;
+    if (dateControl.getAttribute('data-live-date-view') === key) return;
+    dateControl.innerHTML = dateToolbar();
+    dateControl.setAttribute('data-live-date-view', key);
   }
 
   function decorateBadge() {
@@ -553,6 +708,7 @@
 
   async function start() {
     discardDemoData();
+    window.dispatchEvent(new Event('bi:production-ready'));
     refreshPresentation();
     try {
       var manifestResponse = await fetch(STATUS_ENDPOINT, { cache: 'no-store' });
@@ -614,7 +770,8 @@
       state.dateStart = start.value;
       state.dateEnd = end.value;
       state.datePickerOpen = false;
-      enforceProductionView();
+      window.dispatchEvent(new Event('bi:production-ready'));
+      setTimeout(refreshPresentation, 0);
     }
   });
   document.addEventListener('input', function (event) {

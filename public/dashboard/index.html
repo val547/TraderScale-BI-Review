@@ -2494,6 +2494,13 @@ body.overlay-open{overflow:hidden}.drawer-header p{font-size:11px;color:#8f9caa;
   const cents = v => Math.round((Number(v) + Number.EPSILON) * 100) / 100;
   const day = 86400000;
   function ranges(filters) {
+    const live=window.BIProductionConnector&&window.BIProductionConnector.state;
+    if(live&&live.mode==='production'){
+      if(live.dateAllTime)return {current:[live.snapshot.data.orders.map(o=>o.date).filter(Boolean).sort()[0]||live.snapshot.asOf,live.snapshot.data.orders.map(o=>o.date).filter(Boolean).sort().slice(-1)[0]||live.snapshot.asOf],previous:null,label:'All available live history',short:''};
+      const start=live.dateStart,end=live.dateEnd,length=Math.round((Date.parse(end)-Date.parse(start))/day)+1;
+      const previousEnd=new Date(Date.parse(start)-day).toISOString().slice(0,10),previousStart=new Date(Date.parse(previousEnd)-(length-1)*day).toISOString().slice(0,10);
+      return {current:[start,end],previous:[previousStart,previousEnd],label:start+' – '+end+' vs '+previousStart+' – '+previousEnd,short:previousStart+' – '+previousEnd};
+    }
     const p = filters.period || 'mtd';
     if (p === 'mtd') return {current:['2026-10-01','2026-10-25'],previous:['2026-09-01','2026-09-25'],label:'1–25 Oct vs 1–25 Sep 2026',short:'1–25 Sep'};
     if (p === '7d') return {current:['2026-10-19','2026-10-25'],previous:['2026-10-12','2026-10-18'],label:'19–25 Oct vs 12–18 Oct 2026',short:'12–18 Oct'};
@@ -9438,12 +9445,7 @@ function affiliateWorkspace(ctx){
   return '<div class="owner-tabs" role="group" aria-label="Affiliate workspace views">'+[['growth','Performance & growth'],['reports','Partner reports']].map(([key,label])=>'<button data-action="affiliates-view" data-value="'+key+'" class="'+(active===key?'active':'')+'" aria-pressed="'+(active===key)+'">'+label+'</button>').join('')+'</div>'+(active==='growth'?window.BIAffiliateGrowth.render(ctx):window.BIEconomics.renderAffiliates(ctx));
 }
 function fundingWorkspace(ctx){const active=['radar','risk','readiness'].includes(local.fundingView)?local.fundingView:'radar';return '<div class="owner-tabs" role="group" aria-label="Funding and payout views">'+[['radar','Risk radar'],['risk','Payout exposure'],['readiness','Funding & readiness']].map(([key,label])=>'<button data-action="funding-view" data-value="'+key+'" class="'+(active===key?'active':'')+'" aria-pressed="'+(active===key)+'">'+label+'</button>').join('')+'</div>'+(active==='radar'?window.BIRiskRules.render(ctx):active==='risk'?window.BIPayoutPatterns.render(ctx):window.BIPipeline.render(ctx));}
-function accountWorkspace(ctx){
-  const live=ctx.data.demo===false;
-  const active=live?'results':local.accountsTab==='results'?'results':'analytics';
-  if(live)local.accountView='accounts';
-  return '<div class="owner-tabs" role="group" aria-label="Account analytics views">'+[['analytics','Analytics'],['results','Account results']].map(([key,label])=>'<button data-action="accounts-tab" data-value="'+key+'" class="'+(active===key?'active':'')+'" aria-pressed="'+(active===key)+'"'+(live&&key==='analytics'?' disabled title="Aggregate analytics remain on demo data until their production contract is complete"':'')+'>'+label+'</button>').join('')+'</div>'+(active==='analytics'?window.BIAccountAnalytics.render(ctx):(live?'<style>.production-account-results .accounts-page>section.panel:nth-of-type(2),.production-account-results .accounts-page>.insight-note{display:none}</style><div class="production-account-results">'+window.BIAccounts.render(ctx)+'</div>':window.BIAccounts.render(ctx)));
-}
+function accountWorkspace(ctx){const active=local.accountsTab==='results'?'results':'analytics';return '<div class="owner-tabs" role="group" aria-label="Account analytics views">'+[['analytics','Analytics'],['results','Account results']].map(([key,label])=>'<button data-action="accounts-tab" data-value="'+key+'" class="'+(active===key?'active':'')+'" aria-pressed="'+(active===key)+'">'+label+'</button>').join('')+'</div>'+(active==='analytics'?window.BIAccountAnalytics.render(ctx):window.BIAccounts.render(ctx));}
 
 function ownerOverview(ctx){const tabs='<div class="owner-tabs" role="group" aria-label="Owner overview views"><button data-action="owner-tab" data-value="performance" class="'+(local.ownerTab==='performance'?'active':'')+'">Performance</button><button data-action="owner-tab" data-value="changes" class="'+(local.ownerTab==='changes'?'active':'')+'">What changed?</button></div>';return tabs+(local.ownerTab==='changes'?window.BIChanges.render(ctx):window.BIChanges.summary(ctx)+overview(ctx));}
 function comparison(key,m){if(filters.period!=='mtd')return '';const prior=D.getMetrics(Object.assign({},filters,{period:'lastmonth'}));const v=prior[key]?((m[key]-prior[key])/prior[key])*100:0;return (v>=0?'+':'')+v.toFixed(1)+'% vs 1–25 Sep';}
@@ -9709,6 +9711,6 @@ window.BIPrototype={getState:()=>({page,filters,local}),data:D};
 })();
 
 </script>
-<script src="production-connector.js?v=20261106-live-commerce"></script>
+<script src="production-connector.js?v=20261106-live-ui"></script>
 </body>
 </html>

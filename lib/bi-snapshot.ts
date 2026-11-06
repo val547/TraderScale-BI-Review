@@ -313,11 +313,11 @@ WITH eligible_orders AS (
   FROM \`trader-scale-486213.trader_scale.fct_commerce_orders\`
   WHERE is_revenue_eligible
 )
-SELECT o.order_reporting_date,
+SELECT o.store_id, o.order_id, o.order_reporting_date,
   COALESCE(a.affiliate_id, 'unattributed') AS affiliate_id,
   COALESCE(a.affiliate_name_at_order, 'Unattributed') AS affiliate_name,
   COALESCE(a.attribution_status, 'unattributed') AS attribution_status,
-  a.customer_id, a.is_new_customer_order,
+  a.customer_id, a.account_ids, a.is_new_customer_order,
   o.gross_revenue_usd AS gross_revenue,
   o.net_revenue_usd AS net_revenue,
   NULLIF(TRIM(a.conflict_state), '') IS NOT NULL AS has_conflict
@@ -417,8 +417,12 @@ export async function buildSnapshot(serviceAccountJson: string) {
   }));
 
   const affiliates = affiliateRows.map((row) => ({
-    date: date(row.order_reporting_date), id: text(row.affiliate_id), name: text(row.affiliate_name), status: text(row.attribution_status),
+    storeId: text(row.store_id), orderId: text(row.order_id), date: date(row.order_reporting_date),
+    id: text(row.affiliate_id), name: text(row.affiliate_name), status: text(row.attribution_status),
     customerId: text(row.customer_id), isNewCustomer: row.is_new_customer_order === true || text(row.is_new_customer_order) === "true",
+    accountIds: Array.isArray(row.account_ids)
+      ? row.account_ids.map((value) => text(value && typeof value === "object" && "v" in value ? value.v : value)).filter(Boolean)
+      : [],
     grossRevenue: number(row.gross_revenue), netRevenue: number(row.net_revenue),
     hasConflict: row.has_conflict === true || text(row.has_conflict) === "true",
   }));
