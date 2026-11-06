@@ -66,7 +66,8 @@
     state.mode = 'production';
     state.snapshot = payload;
     if (Array.isArray(data.orders) && data.orders.length) {
-      var dates = data.orders.map(function (row) { return row.date; }).filter(Boolean).sort();
+      var dates = data.orders.filter(function (row) { return row.revenueEligible; })
+        .map(function (row) { return row.date; }).filter(Boolean).sort();
       state.ownerEnd = state.ownerEnd || dates[dates.length - 1];
       state.ownerStart = state.ownerStart || state.ownerEnd.slice(0, 7) + '-01';
     }
@@ -160,7 +161,7 @@
   }
 
   function ownerOverviewPage() {
-    var all = state.snapshot.data.orders || [];
+    var all = (state.snapshot.data.orders || []).filter(function (row) { return row.revenueEligible; });
     var start = state.ownerStart || '';
     var end = state.ownerEnd || '';
     var rows = all.filter(function (row) { return row.date >= start && row.date <= end; });

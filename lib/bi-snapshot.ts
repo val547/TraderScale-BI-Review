@@ -12,6 +12,7 @@ type BigQueryResponse = {
   schema?: { fields?: Array<{ name: string }> };
   rows?: Array<{ f: Array<{ v: unknown }> }>;
   errors?: Array<{ message?: string }>;
+  error?: { message?: string; errors?: Array<{ message?: string }> };
 };
 
 function base64Url(value: string | Uint8Array) {
@@ -82,7 +83,8 @@ async function query(credential: ServiceAccount, token: string, sql: string) {
   );
   const payload = await response.json() as BigQueryResponse;
   if (!response.ok || !payload.jobComplete) {
-    const message = payload.errors?.map((error) => error.message).filter(Boolean).join("; ");
+    const message = [payload.error?.message, ...(payload.error?.errors ?? []).map((error) => error.message),
+      ...(payload.errors ?? []).map((error) => error.message)].filter(Boolean).join("; ");
     throw new Error(message || `BigQuery returned ${response.status}.`);
   }
   const fields = payload.schema?.fields ?? [];
@@ -102,7 +104,8 @@ async function query(credential: ServiceAccount, token: string, sql: string) {
     const pageResponse = await fetch(pageUrl, { headers: { authorization: `Bearer ${token}` } });
     const page = await pageResponse.json() as BigQueryResponse;
     if (!pageResponse.ok || !page.jobComplete) {
-      const message = page.errors?.map((error) => error.message).filter(Boolean).join("; ");
+      const message = [page.error?.message, ...(page.error?.errors ?? []).map((error) => error.message),
+        ...(page.errors ?? []).map((error) => error.message)].filter(Boolean).join("; ");
       throw new Error(message || `BigQuery page returned ${pageResponse.status}.`);
     }
     rows.push(...(page.rows ?? []));
@@ -265,9 +268,8 @@ const ORDERS_SQL = `
 WITH eligible AS (
   SELECT store_id, order_id, order_number, order_reporting_date,
     billing_country, gross_revenue_usd, refunded_usd, net_revenue_usd,
-    status_policy_version
+    status, is_revenue_eligible, status_policy_version
   FROM \`trader-scale-486213.trader_scale.fct_commerce_orders\`
-  WHERE is_revenue_eligible
 ), identified AS (
   SELECT o.*,
     COALESCE(NULLIF(b.commerce_customer_key, ''), CONCAT('order:', o.store_id, ':', o.order_id)) AS customer_key
@@ -279,7 +281,7 @@ WITH eligible AS (
   FROM identified
 )
 SELECT store_id, order_id, order_number, order_reporting_date, customer_key,
-  billing_country, gross_revenue_usd, refunded_usd, net_revenue_usd,
+  billing_country, status, is_revenue_eligible, gross_revenue_usd, refunded_usd, net_revenue_usd,
   order_reporting_date = first_order_date AS is_new_customer,
   status_policy_version
 FROM first_orders
@@ -393,10 +395,15 @@ export async function buildSnapshot(serviceAccountJson: string) {
     id: `${text(row.store_id)}:${text(row.order_id)}`,
     orderNumber: text(row.order_number), date: date(row.order_reporting_date),
     customerId: text(row.customer_key), country: text(row.billing_country, "Unknown"),
+    status: text(row.status), revenueEligible: row.is_revenue_eligible === true || text(row.is_revenue_eligible) === "true",
     grossRevenue: number(row.gross_revenue_usd), refunded: number(row.refunded_usd),
     netRevenue: number(row.net_revenue_usd), isNewCustomer: row.is_new_customer === true || text(row.is_new_customer) === "true",
     statusPolicyVersion: text(row.status_policy_version),
   }));
+
+  const eligibleOrders = orders.filter((row) => row.revenueEligible);
+  const maxOrderDate = orders.map((row) => row.date).filter(Boolean).sort().at(-1) || "unknown";
+  const maxEligibleOrderDate = eligibleOrders.map((row) => row.date).filter(Boolean).sort().at(-1) || "unknown";
 
   const profitability = profitabilityRows.map((row) => ({
     programme: programme(row), accountSize: number(row.plan_size), attempts: number(row.attempts),
@@ -430,7 +437,8 @@ export async function buildSnapshot(serviceAccountJson: string) {
       partial: queryErrors.length > 0,
       warnings: [
         "Live canonical orders, attempt profitability, affiliates, customers, accounts and payouts are enabled.",
-        `Loaded ${orders.length} eligible orders, ${customers.length} commerce customers, ${accounts.length} current account records and ${payouts.length} payout records.`,
+        `Loaded ${orders.length} canonical orders (${eligibleOrders.length} revenue eligible), ${customers.length} commerce customers, ${accounts.length} current account records and ${payouts.length} payout records.`,
+        `Latest canonical order date: ${maxOrderDate}; latest revenue-eligible order date: ${maxEligibleOrderDate}.`,
         "Risk detector and business-change screens remain unavailable until their exact live contracts are connected.",
         ...queryErrors,
       ],
