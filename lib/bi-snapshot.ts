@@ -306,7 +306,7 @@ export async function buildSnapshot(serviceAccountJson: string) {
       warnings: [
         "Live Account Analytics and Payouts are enabled.",
         `Loaded all ${accounts.length} current account records and all ${payouts.length} payout records returned by the warehouse.`,
-        "Owner profitability, affiliates, customers and Risk Radar remain on demo data until their aggregate contracts are completed.",
+        "Screens without a validated live source return No live data; demo and fallback values are disabled.",
       ],
     },
     data: { accounts, payouts },

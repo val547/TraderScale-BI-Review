@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "status": "live_partial",
-  "checkedOn": "2026-11-05",
+  "checkedOn": "2026-11-06",
   "project": "trader-scale-486213",
   "location": "europe-west3",
   "businessTimezone": "Europe/London",
@@ -20,22 +20,22 @@
     },
     "affiliates": {
       "label": "Affiliates",
-      "state": "query_ready",
+      "state": "no_live_data",
       "sources": ["trader_scale.fct_affiliate_order_attribution", "trader_scale.fct_commerce_orders", "trader_scale.dim_affiliate_identity"]
     },
     "customers": {
       "label": "Customer value",
-      "state": "mapped",
+      "state": "no_live_data",
       "sources": ["trader_scale.dim_commerce_customers", "trader_scale.bridge_commerce_customer_orders", "trader_scale.fct_commerce_orders"]
     },
     "risk": {
       "label": "Risk Radar",
-      "state": "schema_validation_required",
+      "state": "no_live_data",
       "sources": ["trader_scale.rule04_martingale_daily", "trader_scale.rule05_grid_daily", "trader_scale.rule06_adding_in_drawdown_daily", "trader_scale_app.breach_reviews"]
     },
     "profitability": {
       "label": "Owner Overview & Profitability",
-      "state": "blocked_on_cost_coverage",
+      "state": "no_live_data",
       "sources": ["trader_scale.fct_commerce_orders", "trader_scale.account_profitability"]
     }
   }
