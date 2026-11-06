@@ -44,7 +44,7 @@
 
   function rebuildLiveDimensions() {
     var data = window.BIData;
-    var rows = data.accounts.concat(data.payouts, data.orders || []);
+    var rows = data.accounts.concat(data.payouts, data.orders || [], data.productionProfitability || []);
     replaceArray(data.programmes, unique(rows.map(function (row) { return row.programme; })).sort());
     replaceArray(data.countries, unique(rows.map(function (row) { return row.country; })).sort());
     replaceArray(data.channels, unique(rows.map(function (row) { return row.channel; })).sort());
@@ -90,7 +90,11 @@
       return {
         id: row.id, date: row.date, customerId: row.customerId,
         customerName: profile.name || (account && account.customerName) || 'No live data',
-        programme: account ? account.programme : 'Unknown', accountSize: account ? account.accountSize : 0,
+        programme: row.programme && row.programme !== 'Unknown' ? row.programme : account ? account.programme : 'Unknown',
+        programmeFamily: row.programmeFamily || (account && account.programmeFamily) || 'Unknown',
+        plan: row.productName || (account && account.plan) || '',
+        platform: row.platform || (account && account.platform) || '',
+        accountSize: Number(row.accountSize) || (account ? account.accountSize : 0),
         accountId: account ? account.id : '', country: row.country || profile.country || 'Unknown',
         channel: affiliateId ? 'Affiliate' : 'Unknown', affiliateId: affiliateId,
         affiliateTrafficType: affiliateId ? 'unrecorded' : null,
@@ -263,6 +267,7 @@
     replaceArray(window.BIData.orders, adapted.orders);
     replaceArray(window.BIData.affiliates, adapted.affiliates);
     replaceArray(window.BIData.customers, adapted.customers);
+    window.BIData.productionProfitability = Array.isArray(data.profitability) ? data.profitability.slice() : [];
     rebuildLiveDimensions();
     installLiveCalculations();
     window.BIData.asOf = payload.asOf;
@@ -789,23 +794,36 @@
       if (value) value.textContent = 'Unavailable';
       if (note) note.textContent = 'Live reward eligibility estimate is not connected';
     });
-    root.querySelectorAll('.econ-page .kpi-card').forEach(function (card) {
-      var label = card.querySelector('.kpi-label');
-      if (!label || !/(profit|margin)/i.test(label.textContent)) return;
-      var value = card.querySelector('.kpi-value');
-      var note = card.querySelector('.kpi-note');
-      if (value) value.textContent = 'Unavailable';
-      if (note) note.textContent = 'Live direct-cost data is not connected';
-    });
-    root.querySelectorAll('.econ-page .econ-table tr').forEach(function (row) {
-      [4, 5, 6, 7].forEach(function (position) {
-        var cell = row.querySelector('td:nth-child(' + position + ')');
-        if (cell) cell.textContent = 'Unavailable';
+    var profitabilityReady = state.snapshot && state.snapshot.quality && state.snapshot.quality.profitabilityReady;
+    if (!profitabilityReady) {
+      root.querySelectorAll('.econ-page .kpi-card').forEach(function (card) {
+        var label = card.querySelector('.kpi-label');
+        if (!label || !/(profit|margin)/i.test(label.textContent)) return;
+        var value = card.querySelector('.kpi-value');
+        var note = card.querySelector('.kpi-note');
+        if (value) value.textContent = 'Unavailable';
+        if (note) note.textContent = 'Live direct-cost data is not connected';
       });
-    });
-    root.querySelectorAll('.econ-page .econ-waterfall-row.cost strong,.econ-page .econ-waterfall-row.total strong').forEach(function (value) {
-      value.textContent = 'Unavailable';
-    });
+      root.querySelectorAll('.econ-page .econ-table tr').forEach(function (row) {
+        [4, 5, 6, 7].forEach(function (position) {
+          var cell = row.querySelector('td:nth-child(' + position + ')');
+          if (cell) cell.textContent = 'Unavailable';
+        });
+      });
+      root.querySelectorAll('.econ-page .econ-waterfall-row.cost strong,.econ-page .econ-waterfall-row.total strong').forEach(function (value) {
+        value.textContent = 'Unavailable';
+      });
+    } else {
+      root.querySelectorAll('.econ-page .econ-table tr').forEach(function (row) {
+        var otherCosts = row.querySelector('td:nth-child(5)');
+        if (otherCosts) otherCosts.textContent = 'Unavailable';
+      });
+      root.querySelectorAll('.econ-page .econ-waterfall-row.cost').forEach(function (row) {
+        var label = row.querySelector('span');
+        var value = row.querySelector('strong');
+        if (label && value && !/Allocated trader rewards/i.test(label.textContent)) value.textContent = 'Unavailable';
+      });
+    }
     root.querySelectorAll('.afg-page .kpi-card').forEach(function (card) {
       var label = card.querySelector('.kpi-label');
       if (!label || !/(p&l|profit|commission|margin|cost|cac)/i.test(label.textContent)) return;

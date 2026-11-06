@@ -2663,8 +2663,52 @@ if (location.protocol !== 'file:') document.documentElement.classList.add('produ
     if (key === 'name') return rows.slice().sort((a, b) => a.name.localeCompare(b.name));
     return rows.slice().sort((a, b) => (b[key] || 0) - (a[key] || 0) || a.name.localeCompare(b.name));
   }
+  function liveProfitability(ctx, by) {
+    const source = Array.isArray(ctx.data.productionProfitability) ? ctx.data.productionProfitability : [];
+    if (!source.length) return null;
+    const live = window.BIProductionConnector;
+    const selected = source.filter(row =>
+      (!live || !live.inDateRange || live.inDateRange(row.date)) &&
+      (!ctx.filters.programme || ctx.filters.programme === 'all' || row.programme === ctx.filters.programme) &&
+      (!ctx.filters.size || ctx.filters.size === 'all' || Number(row.accountSize) === Number(ctx.filters.size))
+    );
+    const aggregate = rows => {
+      const orders = rows.reduce((total,row)=>total+(Number(row.attempts)||0),0);
+      const netSales = cents(rows.reduce((total,row)=>total+(Number(row.revenue)||0),0));
+      const rewardCost = cents(rows.reduce((total,row)=>total+(Number(row.payouts)||0),0));
+      const profit = cents(rows.reduce((total,row)=>total+(Number(row.grossProfit)||0),0));
+      return {
+        orders, customers:0, newCustomers:0, repeatCustomers:0, newOrders:0, repeatOrders:0,
+        grossSales:netSales, discounts:cents(rows.reduce((total,row)=>total+(Number(row.discount)||0),0)),
+        refunds:0, chargebacks:0, netSales, rewardCost, processing:0, platform:0, commissions:0,
+        acquisition:0, retainers:0, paidAcquisition:0, otherCosts:null, profit,
+        margin:pct(profit,netSales), profitPerAccount:orders?profit/orders:0,
+        activeFunded:rows.reduce((total,row)=>total+(Number(row.fundedAttempts)||0),0),
+        unpaidRewards:0, approvedUnpaid:rewardCost, repeatShare:0, refundRate:0, rawOrders:[]
+      };
+    };
+    const buckets = new Map();
+    selected.forEach(row=>{
+      const key=by==='size'?String(row.accountSize):row.programme;
+      if(!buckets.has(key)) buckets.set(key,[]);
+      buckets.get(key).push(row);
+    });
+    let rows=Array.from(buckets,([id,values])=>Object.assign(aggregate(values),{
+      id,name:by==='size'?ctx.ui.money(Number(id)):id,kind:by,totalAccounts:values.reduce((n,row)=>n+(Number(row.attempts)||0),0),
+      immatureAccounts:0,matureAccounts:values.reduce((n,row)=>n+(Number(row.attempts)||0),0),cohortOrders:[],horizon:14,oldestAge:0,youngestAge:0
+    }));
+    const q=String(defaults(ctx.local).econSearch).trim().toLowerCase();
+    rows=sortRows(rows.filter(row=>!q||(row.name+' '+row.id).toLowerCase().includes(q)),defaults(ctx.local).econSort);
+    const representedKeys=new Set(rows.map(row=>String(row.id)));
+    const represented=selected.filter(row=>representedKeys.has(String(by==='size'?row.accountSize:row.programme)));
+    const totals=aggregate(represented);
+    return {view:by,horizon:14,rows,totals,selectedAccounts:totals.orders,matureAccounts:totals.orders,immatureAccounts:0,snapshot:ctx.data.asOf,live:true};
+  }
   function getProfitability(ctx) {
-    const l = defaults(ctx.local), selected = normalise(ctx), by = l.econView;
+    const l = defaults(ctx.local), by = l.econView;
+    const production = by !== 'month' && liveProfitability(ctx, by);
+    if (production) return production;
+    const selected = normalise(ctx);
     const buckets = new Map();
     selected.forEach(o => {
       const key = by === 'size' ? String(o.accountSize) : by === 'cohort' ? cohortKey(o) : o.programme;

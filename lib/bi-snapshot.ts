@@ -142,13 +142,42 @@ function date(value: unknown) {
   return raw.slice(0, 10);
 }
 
-function programme(row: Record<string, unknown>) {
+function programmeFamily(row: Record<string, unknown>) {
   const source = `${text(row.plan)} ${text(row.plan_category_name)}`.toLowerCase();
   if (source.includes("one step") || source.includes("speedy")) return "Speedy";
   if (source.includes("two step") || source.includes("pro")) return "Pro";
   if (source.includes("instant")) return "Instant";
   if (source.includes("competition")) return "Classic";
   return text(row.plan_category_name, text(row.plan, "Other"));
+}
+
+function platform(row: Record<string, unknown>) {
+  const source = `${text(row.platform)} ${text(row.plan)}`.toUpperCase();
+  if (source.includes("MT5") || source.includes("METATRADER 5")) return "MT5";
+  if (source.includes("MTR") || source.includes("MATCHTRADER")) return "MatchTrader";
+  return text(row.platform).trim();
+}
+
+function sizeLabel(value: unknown) {
+  const amount = number(value);
+  if (!amount) return "";
+  if (amount >= 1000 && amount % 1000 === 0) return `${amount / 1000}K`;
+  return new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 }).format(amount);
+}
+
+function productSize(row: Record<string, unknown>, explicit?: unknown) {
+  const amount = number(explicit);
+  if (amount) return amount;
+  const raw = `${text(row.plan)} ${text(row.plan_category_name)}`;
+  const match = raw.match(/(?:^|\s)(\d+(?:\.\d+)?)\s*K\b/i);
+  return match ? Number(match[1]) * 1000 : 0;
+}
+
+function productPlan(row: Record<string, unknown>, accountSize?: unknown) {
+  const family = programmeFamily(row);
+  const size = sizeLabel(productSize(row, accountSize));
+  const venue = platform(row);
+  return [family, size, venue].filter(Boolean).join(" · ");
 }
 
 function accountStage(row: Record<string, unknown>) {
@@ -253,20 +282,41 @@ WITH latest_payouts AS (
     PARTITION BY customer_id
     ORDER BY etl_updated_at DESC, etl_loaded_at DESC, updated_at DESC, created_at DESC
   ) = 1
+), latest_accounts AS (
+  SELECT account_id, platform
+  FROM \`trader-scale-486213.trader_scale.src_prop_accounts\`
+  QUALIFY ROW_NUMBER() OVER (
+    PARTITION BY account_id
+    ORDER BY etl_updated_at DESC, etl_loaded_at DESC, updated_at DESC, created_at DESC
+  ) = 1
+), latest_details AS (
+  SELECT account_id, start_balance
+  FROM \`trader-scale-486213.trader_scale.src_prop_accounts_detail\`
+  QUALIFY ROW_NUMBER() OVER (
+    PARTITION BY account_id ORDER BY fetched_at DESC, updated_at DESC, created_at DESC
+  ) = 1
 )
 SELECT p.payout_id, p.payout_nr, p.customer_id,
   c.full_name AS customer_name, c.country, p.account_id,
   CAST(p.account_num AS STRING) AS account_login, p.status,
   p.request_amount, p.share_amount, p.account_currency,
   p.account_plan, p.account_plan_category_name,
+  a.platform, d.start_balance,
   p.created_at AS requested_at, p.approved_at, p.updated_at
 FROM latest_payouts AS p
 LEFT JOIN latest_customers AS c USING (customer_id)
+LEFT JOIN latest_accounts AS a USING (account_id)
+LEFT JOIN latest_details AS d USING (account_id)
 ORDER BY p.created_at DESC
 `;
 
 const ORDERS_SQL = `
-WITH eligible AS (
+WITH primary_product AS (
+  SELECT store_id, order_id,
+    ARRAY_AGG(product_name IGNORE NULLS ORDER BY ABS(COALESCE(total_usd, 0)) DESC, line_id LIMIT 1)[SAFE_OFFSET(0)] AS product_name
+  FROM \`trader-scale-486213.trader_scale.fct_commerce_order_lines\`
+  GROUP BY store_id, order_id
+), eligible AS (
   SELECT store_id, order_id, order_number, order_reporting_date,
     billing_country, gross_revenue_usd, refunded_usd, net_revenue_usd,
     status, is_revenue_eligible, status_policy_version
@@ -283,9 +333,11 @@ WITH eligible AS (
 )
 SELECT store_id, order_id, order_number, order_reporting_date, customer_key,
   billing_country, status, is_revenue_eligible, gross_revenue_usd, refunded_usd, net_revenue_usd,
+  p.product_name,
   order_reporting_date = first_order_date AS is_new_customer,
   status_policy_version
 FROM first_orders
+LEFT JOIN primary_product AS p USING (store_id, order_id)
 ORDER BY order_reporting_date DESC, order_id
 `;
 
@@ -306,6 +358,36 @@ SELECT attempt_started_at_date,
 FROM \`trader-scale-486213.trader_scale.account_profitability\`
 GROUP BY 1, 2, 3
 ORDER BY revenue DESC
+`;
+
+const TRADES_SQL = `
+WITH trades AS (
+  SELECT account_id, Symbol,
+    COALESCE(profit, 0) + COALESCE(costs, 0) AS net_realized,
+    close_timestamp
+  FROM \`trader-scale-486213.trader_scale.rpt_account_trade_history\`
+  WHERE row_type = 'TRADE'
+), symbol_counts AS (
+  SELECT account_id, Symbol, COUNT(*) AS trade_count
+  FROM trades
+  WHERE NULLIF(TRIM(Symbol), '') IS NOT NULL
+  GROUP BY account_id, Symbol
+), top_symbols AS (
+  SELECT account_id,
+    ARRAY_AGG(Symbol ORDER BY trade_count DESC, Symbol LIMIT 1)[SAFE_OFFSET(0)] AS top_symbol
+  FROM symbol_counts
+  GROUP BY account_id
+)
+SELECT t.account_id, COUNT(*) AS trade_count,
+  SAFE_MULTIPLY(SAFE_DIVIDE(COUNTIF(t.net_realized > 0), COUNT(*)), 100) AS win_rate,
+  MAX(t.net_realized) AS largest_trade,
+  SUM(t.net_realized) AS net_realized,
+  MIN(t.close_timestamp) AS first_closed_trade_at,
+  MAX(t.close_timestamp) AS last_closed_trade_at,
+  ANY_VALUE(s.top_symbol) AS top_symbol
+FROM trades AS t
+LEFT JOIN top_symbols AS s USING (account_id)
+GROUP BY t.account_id
 `;
 
 const AFFILIATES_SQL = `
@@ -345,19 +427,23 @@ export async function buildSnapshot(serviceAccountJson: string) {
     query(credential, token, ACCOUNTS_SQL),
     query(credential, token, PAYOUTS_SQL),
   ]);
-  const [orderResult, profitabilityResult, affiliateResult, customerResult] = await Promise.all([
+  const [orderResult, profitabilityResult, affiliateResult, customerResult, tradeResult] = await Promise.all([
     optionalQuery(credential, token, "Canonical orders", ORDERS_SQL),
     optionalQuery(credential, token, "Attempt profitability", PROFITABILITY_SQL),
     optionalQuery(credential, token, "Affiliate attribution", AFFILIATES_SQL),
     optionalQuery(credential, token, "Commerce customers", CUSTOMERS_SQL),
+    optionalQuery(credential, token, "Account trade history", TRADES_SQL),
   ]);
   const orderRows = orderResult.rows;
   const profitabilityRows = profitabilityResult.rows;
   const affiliateRows = affiliateResult.rows;
   const customerRows = customerResult.rows;
-  const queryErrors = [orderResult.error, profitabilityResult.error, affiliateResult.error, customerResult.error].filter(Boolean);
+  const tradeRows = tradeResult.rows;
+  const tradeByAccount = new Map(tradeRows.map((row) => [text(row.account_id), row]));
+  const queryErrors = [orderResult.error, profitabilityResult.error, affiliateResult.error, customerResult.error, tradeResult.error].filter(Boolean);
 
   const accounts = accountRows.map((row) => {
+    const trade = tradeByAccount.get(text(row.account_id));
     const initialBalance = number(row.start_balance);
     const balance = number(row.current_balance);
     const equity = number(row.current_equity || row.current_balance);
@@ -369,7 +455,8 @@ export async function buildSnapshot(serviceAccountJson: string) {
       id: text(row.account_id), login: text(row.account_login), orderId: "",
       customerId: text(row.customer_id),
       customerName: text(row.customer_name, text(row.customer_nr, "Unknown customer")),
-      programme: programme(row), accountSize: initialBalance,
+      programme: productPlan(row, initialBalance), programmeFamily: programmeFamily(row),
+      plan: text(row.plan, text(row.plan_category_name)), platform: platform(row), accountSize: initialBalance,
       country: text(row.country, "Unknown"), channel: "Unknown",
       openedAt: date(row.created_at), stage, status,
       initialBalance, balance, equity, realizedPnl, openPnl: equity - balance,
@@ -380,8 +467,14 @@ export async function buildSnapshot(serviceAccountJson: string) {
       payoutAccrued: 0, payoutApproved: number(row.approved_unpaid), payoutPaid: number(row.paid_total),
       eligibleNow: false, riskLevel: stage === "Breached" ? "High" : "Normal",
       riskReason: stage === "Breached" ? "Account is marked breached in the warehouse." : "No live detector severity is joined to this account snapshot.",
-      tradeCount: number(row.total_trades), winRate: number(row.win_rate), largestTrade: 0,
-      assetFocus: "—", consistency: 0, profitDays: 0,
+      tradeCount: trade ? number(trade.trade_count) : number(row.total_trades),
+      winRate: trade ? number(trade.win_rate) : number(row.win_rate),
+      largestTrade: trade ? number(trade.largest_trade) : 0,
+      assetFocus: trade ? text(trade.top_symbol, "—") : "—",
+      tradeNetRealized: trade ? number(trade.net_realized) : null,
+      firstClosedTradeAt: trade ? date(trade.first_closed_trade_at) : "",
+      lastClosedTradeAt: trade ? date(trade.last_closed_trade_at) : "",
+      tradeHistoryAvailable: Boolean(trade), consistency: 0, profitDays: 0,
       daysSinceOpen: Math.max(0, Math.floor((Date.now() - Date.parse(`${date(row.created_at)}T00:00:00Z`)) / 86400000)),
       demoRules: false,
     };
@@ -395,7 +488,10 @@ export async function buildSnapshot(serviceAccountJson: string) {
       id: text(row.payout_id, text(row.payout_nr)), customerId: text(row.customer_id),
       customerName: text(row.customer_name, "Unknown customer"), account: text(row.account_login),
       accountId: text(row.account_id),
-      programme: programme({ plan: row.account_plan, plan_category_name: row.account_plan_category_name }),
+      programme: productPlan({ plan: row.account_plan, plan_category_name: row.account_plan_category_name, platform: row.platform }, row.start_balance),
+      programmeFamily: programmeFamily({ plan: row.account_plan, plan_category_name: row.account_plan_category_name }),
+      plan: text(row.account_plan, text(row.account_plan_category_name)), platform: platform({ platform: row.platform, plan: row.account_plan }),
+      accountSize: number(row.start_balance),
       country: text(row.country, "Unknown"), channel: "Unknown",
       amount: number(row.share_amount || row.request_amount), requestedAt: date(row.requested_at),
       status, method: "Restricted", approvedAt,
@@ -412,6 +508,11 @@ export async function buildSnapshot(serviceAccountJson: string) {
     status: text(row.status), revenueEligible: row.is_revenue_eligible === true || text(row.is_revenue_eligible) === "true",
     grossRevenue: number(row.gross_revenue_usd), refunded: number(row.refunded_usd),
     netRevenue: number(row.net_revenue_usd), isNewCustomer: row.is_new_customer === true || text(row.is_new_customer) === "true",
+    productName: text(row.product_name),
+    programme: row.product_name ? productPlan({ plan: row.product_name }) : "Unknown",
+    programmeFamily: row.product_name ? programmeFamily({ plan: row.product_name }) : "Unknown",
+    platform: row.product_name ? platform({ plan: row.product_name }) : "",
+    accountSize: row.product_name ? productSize({ plan: row.product_name }) : 0,
     statusPolicyVersion: text(row.status_policy_version),
   }));
 
@@ -420,7 +521,9 @@ export async function buildSnapshot(serviceAccountJson: string) {
   const maxEligibleOrderDate = eligibleOrders.map((row) => row.date).filter(Boolean).sort().at(-1) || "unknown";
 
   const profitability = profitabilityRows.map((row) => ({
-    date: date(row.attempt_started_at_date), programme: programme(row), accountSize: number(row.plan_size), attempts: number(row.attempts),
+    date: date(row.attempt_started_at_date),
+    programme: productPlan(row, row.plan_size), programmeFamily: programmeFamily(row), plan: text(row.plan),
+    platform: platform(row), accountSize: number(row.plan_size), attempts: number(row.attempts),
     fundedAttempts: number(row.funded_attempts), revenue: number(row.revenue), discount: number(row.discount),
     payoutCount: number(row.payout_count), payouts: number(row.payouts), grossProfit: number(row.gross_profit),
   }));
@@ -452,10 +555,11 @@ export async function buildSnapshot(serviceAccountJson: string) {
     quality: {
       profitabilityReady: !profitabilityResult.error, revenueReady: !orderResult.error,
       affiliatesReady: !affiliateResult.error, customersReady: !customerResult.error,
+      tradesReady: !tradeResult.error,
       partial: queryErrors.length > 0,
       warnings: [
-        "Live canonical orders, attempt profitability, affiliates, customers, accounts and payouts are enabled.",
-        `Loaded ${orders.length} canonical orders (${eligibleOrders.length} revenue eligible), ${customers.length} commerce customers, ${accounts.length} current account records and ${payouts.length} payout records.`,
+        "Live canonical orders, attempt profitability, affiliates, customers, accounts, payouts and account trade aggregates are enabled.",
+        `Loaded ${orders.length} canonical orders (${eligibleOrders.length} revenue eligible), ${customers.length} commerce customers, ${accounts.length} current account records, ${payouts.length} payout records and ${tradeRows.length} account trade aggregates.`,
         `Latest canonical order date: ${maxOrderDate}; latest revenue-eligible order date: ${maxEligibleOrderDate}.`,
         "Risk detector and business-change screens remain unavailable until their exact live contracts are connected.",
         ...queryErrors,
