@@ -12,6 +12,10 @@ const accessPassword = process.env.BI_ACCESS_PASSWORD || "";
 const googleClientId = process.env.GOOGLE_OAUTH_CLIENT_ID || "";
 const googleClientSecret = process.env.GOOGLE_OAUTH_CLIENT_SECRET || "";
 const appBaseUrl = (process.env.APP_BASE_URL || "").replace(/\/$/, "");
+const allowedGoogleEmails = (process.env.BI_ALLOWED_GOOGLE_EMAILS || "")
+  .split(",")
+  .map((value) => value.trim().toLowerCase())
+  .filter(Boolean);
 const googleOAuthConfigured = Boolean(googleClientId && googleClientSecret && appBaseUrl);
 const dashboardRoot = fileURLToPath(new URL("./public/dashboard/", import.meta.url));
 const sessionValue = createHash("sha256").update(`traderscale-bi:${accessEmail}:${accessPassword}`).digest("hex");
@@ -64,6 +68,11 @@ function safeEqual(left: string, right: string) {
 
 function authenticated(request: IncomingMessage) {
   return safeEqual(cookies(request)[cookieName] || "", sessionValue);
+}
+
+function googleEmailAllowed(email: string) {
+  if (safeEqual(email, accessEmail)) return true;
+  return allowedGoogleEmails.some((allowed) => safeEqual(email, allowed));
 }
 
 function loginPage(message = "") {
@@ -157,8 +166,8 @@ const server = createServer(async (request, response) => {
     try {
       if (!expectedState || !safeEqual(expectedState, returnedState) || !code) throw new Error("Invalid Google OAuth callback.");
       const email = await googleIdentity(code);
-      if (!safeEqual(email, accessEmail)) {
-        send(response, 403, loginPage(`Доступ разрешён только для ${accessEmail}.`), "text/html; charset=utf-8");
+      if (!googleEmailAllowed(email)) {
+        send(response, 403, loginPage("Эта рабочая почта не включена в список доступа."), "text/html; charset=utf-8");
         return;
       }
       response.writeHead(303, {

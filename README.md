@@ -37,6 +37,7 @@ variables in the Railway service:
 - `GOOGLE_OAUTH_CLIENT_ID` — Google OAuth web client ID.
 - `GOOGLE_OAUTH_CLIENT_SECRET` — Google OAuth web client secret.
 - `APP_BASE_URL` — public origin, currently `https://traderscale-bi-review-production.up.railway.app`.
+- `BI_ALLOWED_GOOGLE_EMAILS` — comma-separated exact work emails allowed through Google; `BI_ACCESS_EMAIL` is always allowed.
 
 The Google OAuth client must allow this redirect URI:
 `https://traderscale-bi-review-production.up.railway.app/auth/google/callback`.
