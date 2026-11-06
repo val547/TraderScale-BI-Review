@@ -204,7 +204,17 @@
     var filters = document.getElementById('filters-row');
     var actions = document.querySelector('.heading-actions');
     if (filters) filters.hidden = true;
-    if (actions) actions.hidden = page !== 'accounts' && page !== 'pipeline';
+    if (actions) actions.hidden = true;
+    var description = document.getElementById('page-description');
+    var eyebrow = document.getElementById('eyebrow');
+    if (eyebrow) eyebrow.textContent = state.mode === 'production' ? 'LIVE WAREHOUSE' : 'WAREHOUSE CONNECTION';
+    if (description) {
+      description.textContent = page === 'accounts'
+        ? 'Validated account records from the production warehouse.'
+        : page === 'pipeline'
+          ? 'Validated payout records from the production warehouse.'
+          : 'This screen displays values only when a validated live source is connected.';
+    }
   }
 
   function enforceProductionView() {
@@ -228,13 +238,13 @@
   function decorateBadge() {
     var badge = document.querySelector('.demo-badge');
     if (!badge) return;
+    var sidebarVersion = document.querySelector('.sidebar-version');
+    var footerCopy = document.querySelector('.workspace-footer > span');
+    if (sidebarVersion) sidebarVersion.innerHTML = '<span class="version-dot"></span> Production warehouse';
+    if (footerCopy) footerCopy.textContent = 'TraderScale BI / Live warehouse data only.';
     if (state.mode === 'production') {
       badge.textContent = 'LIVE DATA';
       badge.title = 'Only connected production datasets are displayed.';
-      var sidebarVersion = document.querySelector('.sidebar-version');
-      if (sidebarVersion) sidebarVersion.innerHTML = '<span class="version-dot"></span> Live warehouse data';
-      var footerCopy = document.querySelector('.workspace-footer > span');
-      if (footerCopy) footerCopy.textContent = 'TraderScale BI / Live warehouse data only.';
     } else if (state.mode === 'error') {
       badge.textContent = 'NO LIVE DATA';
       badge.title = 'The warehouse snapshot is unavailable. No fallback data is displayed.';
