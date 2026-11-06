@@ -577,3 +577,27 @@ export async function buildSnapshot(serviceAccountJson: string) {
     data: { accounts, payouts, orders, profitability, affiliates, customers },
   };
 }
+
+export function affiliateSnapshotDiagnostics(snapshot: unknown) {
+  const payload = snapshot as { quality?: unknown; data?: { affiliates?: Array<{ date?: string; status?: string; id?: string }> } };
+  const rows = payload.data?.affiliates ?? [];
+  const statusCounts: Record<string, number> = {};
+  rows.forEach((row) => {
+    const status = text(row.status, "unknown").trim().toLowerCase() || "unknown";
+    statusCounts[status] = (statusCounts[status] || 0) + 1;
+  });
+  const latest = (source: typeof rows) => source.map((row) => text(row.date)).filter(Boolean).sort().at(-1) || "unknown";
+  const attributed = rows.filter((row) => text(row.status).trim().toLowerCase() === "attributed" && text(row.id) !== "unattributed");
+  const afterOctober21 = rows.filter((row) => text(row.date) > "2026-10-21");
+  const afterStatusCounts: Record<string, number> = {};
+  afterOctober21.forEach((row) => {
+    const status = text(row.status, "unknown").trim().toLowerCase() || "unknown";
+    afterStatusCounts[status] = (afterStatusCounts[status] || 0) + 1;
+  });
+  return {
+    generatedAt: new Date().toISOString(), totalRows: rows.length,
+    latestSourceOrderDate: latest(rows), latestAttributedOrderDate: latest(attributed),
+    statusCounts, rowsAfterOctober21: afterOctober21.length, afterOctober21StatusCounts: afterStatusCounts,
+    quality: payload.quality ?? {},
+  };
+}

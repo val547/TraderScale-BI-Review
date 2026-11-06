@@ -3,7 +3,7 @@ import { createReadStream, existsSync, statSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
-import { buildSnapshot } from "./lib/bi-snapshot.ts";
+import { affiliateSnapshotDiagnostics, buildSnapshot } from "./lib/bi-snapshot.ts";
 
 const port = Number(process.env.PORT || 3000);
 const serviceAccountJson = process.env.GOOGLE_SERVICE_ACCOUNT_JSON || "";
@@ -217,8 +217,11 @@ const server = createServer(async (request, response) => {
       if (!snapshotCache || snapshotCache.expiresAt <= Date.now()) {
         snapshotCache = { expiresAt: Date.now() + 300_000, value: await buildSnapshot(serviceAccountJson) };
       }
+      const value = url.searchParams.get("view") === "affiliate-diagnostics"
+        ? affiliateSnapshotDiagnostics(snapshotCache.value)
+        : snapshotCache.value;
       response.writeHead(200, { ...securityHeaders(), "content-type": "application/json; charset=utf-8", "cache-control": "private, max-age=0" });
-      response.end(JSON.stringify(snapshotCache.value));
+      response.end(JSON.stringify(value));
     } catch (error) {
       const detail = error instanceof Error ? error.message : "Unknown error";
       console.error("BI snapshot failed", detail);

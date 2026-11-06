@@ -1,6 +1,6 @@
 import { env } from "cloudflare:workers";
 import { headers } from "next/headers";
-import { buildSnapshot } from "../../../../lib/bi-snapshot";
+import { affiliateSnapshotDiagnostics, buildSnapshot } from "../../../../lib/bi-snapshot";
 
 export const dynamic = "force-dynamic";
 
@@ -16,16 +16,19 @@ function json(value: unknown, status = 200) {
   });
 }
 
-export async function GET() {
+export async function GET(request: Request) {
   const requestHeaders = await headers();
   if (!requestHeaders.get("oai-authenticated-user-id")) {
     return json({ error: "Authentication required." }, 401);
   }
   try {
-    if (cachedSnapshot && cachedSnapshot.expiresAt > Date.now()) return json(cachedSnapshot.value);
-    const value = await buildSnapshot(env.GOOGLE_SERVICE_ACCOUNT_JSON ?? "");
-    cachedSnapshot = { expiresAt: Date.now() + 5 * 60 * 1000, value };
-    return json(value);
+    if (!cachedSnapshot || cachedSnapshot.expiresAt <= Date.now()) {
+      const value = await buildSnapshot(env.GOOGLE_SERVICE_ACCOUNT_JSON ?? "");
+      cachedSnapshot = { expiresAt: Date.now() + 5 * 60 * 1000, value };
+    }
+    return json(new URL(request.url).searchParams.get("view") === "affiliate-diagnostics"
+      ? affiliateSnapshotDiagnostics(cachedSnapshot.value)
+      : cachedSnapshot.value);
   } catch (error) {
     const detail = error instanceof Error ? error.message : "Unknown error";
     console.error("BI snapshot failed", detail);
