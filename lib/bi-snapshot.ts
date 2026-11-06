@@ -144,8 +144,8 @@ function date(value: unknown) {
 
 function programmeFamily(row: Record<string, unknown>) {
   const source = `${text(row.plan)} ${text(row.plan_category_name)}`.toLowerCase();
-  if (source.includes("one step") || source.includes("speedy")) return "Speedy";
-  if (source.includes("two step") || source.includes("pro")) return "Pro";
+  if (/\b(?:one|1)[ -]?step\b/.test(source) || source.includes("speedy")) return "Speedy";
+  if (/\b(?:two|2)[ -]?step\b/.test(source) || source.includes("pro")) return "Pro";
   if (source.includes("instant")) return "Instant";
   if (source.includes("competition")) return "Classic";
   return text(row.plan_category_name, text(row.plan, "Other"));
@@ -153,8 +153,12 @@ function programmeFamily(row: Record<string, unknown>) {
 
 function platform(row: Record<string, unknown>) {
   const source = `${text(row.platform)} ${text(row.plan)}`.toUpperCase();
+  const compact = source.replace(/[^A-Z0-9]/g, "");
   if (source.includes("MT5") || source.includes("METATRADER 5")) return "MT5";
-  if (source.includes("MTR") || source.includes("MATCHTRADER")) return "MatchTrader";
+  if (compact.includes("METATRADER5")) return "MT5";
+  if (source.includes("MT4") || compact.includes("METATRADER4")) return "MT4";
+  if (source.includes("MTR") || compact.includes("MATCHTRADER")) return "MatchTrader";
+  if (compact.includes("CTRADER")) return "cTrader";
   return text(row.platform).trim();
 }
 

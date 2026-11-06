@@ -731,20 +731,26 @@
       [/payment settlement dates/gi, 'approval dates'],
       [/settlement dates/gi, 'approval dates'],
       [/demo record/gi, 'live warehouse record'],
+      [/simulated payout history from January 2024/gi, 'live warehouse history where available'],
+      [/Simulated device links, beneficiary references and paired trading observations/gi, 'Live source not connected'],
+      [/No live business systems are connected to this prototype\./gi, 'Connected production warehouse sources are listed above.'],
       [/\bdemonstration\b/gi, 'live'],
       [/\bfictional\b/gi, 'live'],
       [/\bdemo\b/gi, 'live'],
-      [/\bsample data\b/gi, 'live warehouse data']
+      [/\bsample data\b/gi, 'live warehouse data'],
+      [/\bsample\b/gi, 'live']
     ];
     var root = document.getElementById('page-content');
     if (!root) return;
-    var walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
-    var node;
-    while ((node = walker.nextNode())) {
-      var value = node.nodeValue;
-      replacements.forEach(function (item) { value = value.replace(item[0], item[1]); });
-      if (value !== node.nodeValue) node.nodeValue = value;
-    }
+    [root, document.getElementById('drawer-layer')].filter(Boolean).forEach(function (copyRoot) {
+      var walker = document.createTreeWalker(copyRoot, NodeFilter.SHOW_TEXT);
+      var node;
+      while ((node = walker.nextNode())) {
+        var value = node.nodeValue;
+        replacements.forEach(function (item) { value = value.replace(item[0], item[1]); });
+        if (value !== node.nodeValue) node.nodeValue = value;
+      }
+    });
     var changeSummary = root.querySelector('.changes-summary p');
     if (changeSummary) changeSummary.textContent = 'Use the date filter to choose a period with complete preceding history.';
     var changesEmpty = root.querySelector('.changes-empty');
