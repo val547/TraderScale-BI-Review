@@ -222,15 +222,15 @@
 
   function installProductionSources() {
     function sourceFor(data) {
-      var orders = (Array.isArray(data.orders) ? data.orders : []).filter(function (row) { return inDateRange(row.date); });
+      var orders = Array.isArray(data.orders) ? data.orders : [];
       var dates = orders.map(function (row) { return isoDate(row.date); }).filter(Boolean).sort();
       var payouts = Array.isArray(data.payouts) ? data.payouts : [];
       return {
         orders: orders,
         customers: Array.isArray(data.customers) ? data.customers : [],
         payouts: payouts,
-        historyStart: state.dateAllTime ? (dates[0] || data.asOf) : state.dateStart,
-        asOf: state.dateAllTime ? data.asOf : state.dateEnd,
+        historyStart: dates[0] || data.asOf,
+        asOf: data.asOf,
         extendedDemo: false,
         sourceNote: 'Live production warehouse history.'
       };
