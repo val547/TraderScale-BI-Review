@@ -34,6 +34,12 @@ variables in the Railway service:
 - `GOOGLE_SERVICE_ACCOUNT_JSON` — secret JSON for the read-only warehouse account.
 - `BI_ACCESS_EMAIL` — administrator email used on the login page.
 - `BI_ACCESS_PASSWORD` — private dashboard password, at least 16 characters.
+- `GOOGLE_OAUTH_CLIENT_ID` — Google OAuth web client ID.
+- `GOOGLE_OAUTH_CLIENT_SECRET` — Google OAuth web client secret.
+- `APP_BASE_URL` — public origin, currently `https://traderscale-bi-review-production.up.railway.app`.
+
+The Google OAuth client must allow this redirect URI:
+`https://traderscale-bi-review-production.up.railway.app/auth/google/callback`.
 
 The public health check is `/health`; all dashboard files and the BI snapshot API
 are protected by an HttpOnly session cookie.
