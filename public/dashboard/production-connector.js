@@ -427,6 +427,13 @@
 
   window.BIProductionConnector = { state: state, applySnapshot: applySnapshot, start: start };
   document.addEventListener('click', function (event) {
+    var pageLink = event.target.closest('[data-page]');
+    if (pageLink) {
+      // The dashboard router uses history.pushState(), which does not emit a
+      // hashchange event. Re-apply the production view after its render pass.
+      setTimeout(refreshPresentation, 0);
+      return;
+    }
     var button = event.target.closest('[data-production-action="apply-owner-range"]');
     if (!button) return;
     var start = document.getElementById('owner-live-start');
