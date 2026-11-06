@@ -534,7 +534,7 @@ export async function buildSnapshot(serviceAccountJson: string) {
 
   const affiliates = affiliateRows.map((row) => ({
     storeId: text(row.store_id), orderId: text(row.order_id), date: date(row.order_reporting_date),
-    id: text(row.affiliate_id), name: text(row.affiliate_name), status: text(row.attribution_status),
+    id: text(row.affiliate_id).trim(), name: text(row.affiliate_name).trim(), status: text(row.attribution_status).trim().toLowerCase(),
     customerId: text(row.customer_id), isNewCustomer: row.is_new_customer_order === true || text(row.is_new_customer_order) === "true",
     accountIds: Array.isArray(row.account_ids)
       ? row.account_ids.map((value) => text(value && typeof value === "object" && "v" in value ? value.v : value)).filter(Boolean)
@@ -553,6 +553,10 @@ export async function buildSnapshot(serviceAccountJson: string) {
     kycVerified: row.kyc_verified === true || text(row.kyc_verified) === "true",
   }));
 
+  const latestAffiliateRowDate = affiliates.map((row) => row.date).filter(Boolean).sort().at(-1) || "unknown";
+  const latestAttributedAffiliateDate = affiliates.filter((row) => row.status === "attributed" && row.id !== "unattributed")
+    .map((row) => row.date).filter(Boolean).sort().at(-1) || "unknown";
+
   return {
     schemaVersion: 1, mode: "production",
     asOf: new Date().toISOString().slice(0, 10), currency: "USD",
@@ -565,6 +569,7 @@ export async function buildSnapshot(serviceAccountJson: string) {
         "Live canonical orders, attempt profitability, affiliates, customers, accounts, payouts and account trade aggregates are enabled.",
         `Loaded ${orders.length} canonical orders (${eligibleOrders.length} revenue eligible), ${customers.length} commerce customers, ${accounts.length} current account records, ${payouts.length} payout records and ${tradeRows.length} account trade aggregates.`,
         `Latest canonical order date: ${maxOrderDate}; latest revenue-eligible order date: ${maxEligibleOrderDate}.`,
+        `Latest affiliate-source order date: ${latestAffiliateRowDate}; latest attributed affiliate order date: ${latestAttributedAffiliateDate}.`,
         "Risk detector and business-change screens remain unavailable until their exact live contracts are connected.",
         ...queryErrors,
       ],
