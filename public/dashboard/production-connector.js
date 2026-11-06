@@ -357,7 +357,10 @@
     (data.profitability || []).forEach(function (row) { if (isoDate(row.date)) values.push(isoDate(row.date)); });
     (data.affiliates || []).forEach(function (row) { if (isoDate(row.date)) values.push(isoDate(row.date)); });
     values.sort();
-    return { min: values[0] || state.snapshot.asOf, max: values[values.length - 1] || state.snapshot.asOf };
+    var fallback = state.snapshot && state.snapshot.asOf
+      ? state.snapshot.asOf
+      : new Date().toISOString().slice(0, 10);
+    return { min: values[0] || fallback, max: values[values.length - 1] || fallback };
   }
 
   function inDateRange(value) {
@@ -929,7 +932,6 @@
 
   async function start() {
     discardDemoData();
-    window.dispatchEvent(new Event('bi:production-ready'));
     refreshPresentation();
     try {
       var manifestResponse = await fetch(STATUS_ENDPOINT, { cache: 'no-store' });
