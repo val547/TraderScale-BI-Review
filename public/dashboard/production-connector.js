@@ -7,7 +7,10 @@
 
   function replaceArray(target, source) {
     if (!Array.isArray(target) || !Array.isArray(source)) return false;
-    target.splice.apply(target, [0, target.length].concat(source));
+    target.length = 0;
+    for (var index = 0; index < source.length; index += 5000) {
+      target.push.apply(target, source.slice(index, index + 5000));
+    }
     return true;
   }
 

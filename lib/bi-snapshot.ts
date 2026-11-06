@@ -7,6 +7,8 @@ type ServiceAccount = {
 
 type BigQueryResponse = {
   jobComplete?: boolean;
+  jobReference?: { projectId?: string; jobId?: string; location?: string };
+  pageToken?: string;
   schema?: { fields?: Array<{ name: string }> };
   rows?: Array<{ f: Array<{ v: unknown }> }>;
   errors?: Array<{ message?: string }>;
@@ -73,6 +75,7 @@ async function query(credential: ServiceAccount, token: string, sql: string) {
         useLegacySql: false,
         location: "europe-west3",
         timeoutMs: 25000,
+        maxResults: 10000,
         maximumBytesBilled: "2000000000",
       }),
     },
@@ -83,7 +86,29 @@ async function query(credential: ServiceAccount, token: string, sql: string) {
     throw new Error(message || `BigQuery returned ${response.status}.`);
   }
   const fields = payload.schema?.fields ?? [];
-  return (payload.rows ?? []).map((row) => Object.fromEntries(
+  const rows = [...(payload.rows ?? [])];
+  let pageToken = payload.pageToken;
+  const jobId = payload.jobReference?.jobId;
+  const projectId = payload.jobReference?.projectId || credential.project_id;
+  const location = payload.jobReference?.location || "europe-west3";
+  while (pageToken) {
+    if (!jobId) throw new Error("BigQuery returned a page token without a job ID.");
+    const pageUrl = new URL(
+      `https://bigquery.googleapis.com/bigquery/v2/projects/${encodeURIComponent(projectId)}/queries/${encodeURIComponent(jobId)}`,
+    );
+    pageUrl.searchParams.set("location", location);
+    pageUrl.searchParams.set("maxResults", "10000");
+    pageUrl.searchParams.set("pageToken", pageToken);
+    const pageResponse = await fetch(pageUrl, { headers: { authorization: `Bearer ${token}` } });
+    const page = await pageResponse.json() as BigQueryResponse;
+    if (!pageResponse.ok || !page.jobComplete) {
+      const message = page.errors?.map((error) => error.message).filter(Boolean).join("; ");
+      throw new Error(message || `BigQuery page returned ${pageResponse.status}.`);
+    }
+    rows.push(...(page.rows ?? []));
+    pageToken = page.pageToken;
+  }
+  return rows.map((row) => Object.fromEntries(
     fields.map((field, index) => [field.name, row.f[index]?.v ?? null]),
   ));
 }
@@ -191,7 +216,7 @@ LEFT JOIN latest_analytics AS x USING (account_id)
 LEFT JOIN latest_customers AS c USING (customer_id)
 LEFT JOIN payout_totals AS p USING (account_id)
 ORDER BY a.updated_at DESC
-LIMIT 200`;
+`;
 
 const PAYOUTS_SQL = `
 WITH latest_payouts AS (
@@ -221,7 +246,7 @@ SELECT p.payout_id, p.payout_nr, p.customer_id,
 FROM latest_payouts AS p
 LEFT JOIN latest_customers AS c USING (customer_id)
 ORDER BY p.created_at DESC
-LIMIT 200`;
+`;
 
 export async function buildSnapshot(serviceAccountJson: string) {
   if (!serviceAccountJson) throw new Error("BigQuery secret is not configured.");
@@ -280,7 +305,7 @@ export async function buildSnapshot(serviceAccountJson: string) {
       profitabilityReady: false, partial: true,
       warnings: [
         "Live Account Analytics and Payouts are enabled.",
-        "Detail responses are capped at 200 latest records.",
+        `Loaded all ${accounts.length} current account records and all ${payouts.length} payout records returned by the warehouse.`,
         "Owner profitability, affiliates, customers and Risk Radar remain on demo data until their aggregate contracts are completed.",
       ],
     },
