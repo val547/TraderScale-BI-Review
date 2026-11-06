@@ -3593,7 +3593,7 @@ body.overlay-open{overflow:hidden}.drawer-header p{font-size:11px;color:#8f9caa;
       payoutMap.set(payout.accountId, rows);
     });
     return (D.accounts || []).filter(account => account.status === 'Active' && matches(account, ctx.filters || {})).map(account => {
-      const rules = D.accountRules[account.programme];
+      const rules = D.accountRules[account.programme] || {minimumProfitDays:0,consistencyLimitPct:Number.POSITIVE_INFINITY};
       const requests = payoutMap.get(account.id) || [];
       const approved = sum(requests.filter(request => request.status === 'Approved'), 'amount');
       const underReview = sum(requests.filter(request => request.status === 'Under review'), 'amount');
