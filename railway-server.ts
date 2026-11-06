@@ -78,9 +78,9 @@ function googleEmailAllowed(email: string) {
 function loginPage(message = "") {
   const note = message ? `<p class="error">${message}</p>` : "";
   const googleButton = googleOAuthConfigured
-    ? '<a class="google" href="/auth/google"><span>G</span> Войти через Google</a><div class="divider"><span>или</span></div>'
+    ? '<a class="google" href="/auth/google"><span>G</span> Continue with Google</a><div class="divider"><span>or</span></div>'
     : "";
-  return `<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>TraderScale BI</title><style>body{margin:0;background:#f4f7fa;color:#1c2a38;font:14px Inter,Arial,sans-serif;display:grid;place-items:center;min-height:100vh}.card{width:min(360px,calc(100vw - 40px));background:#fff;border:1px solid #dfe7ee;border-radius:12px;padding:30px;box-shadow:0 18px 50px #28435d14}h1{font-size:22px;margin:0 0 8px}p{color:#6b7c8c;line-height:1.5}.error{color:#b42318}label{display:block;font-size:12px;font-weight:600;margin:18px 0 7px}input{box-sizing:border-box;width:100%;height:42px;border:1px solid #cbd6df;border-radius:7px;padding:0 12px}button,.google{box-sizing:border-box;width:100%;height:42px;margin-top:18px;border:0;border-radius:7px;background:#162f46;color:#fff;font-weight:600;cursor:pointer;display:flex;align-items:center;justify-content:center;text-decoration:none}.google{background:#fff;color:#334155;border:1px solid #cbd6df}.google span{font-size:18px;color:#4285f4;margin-right:10px}.divider{display:flex;align-items:center;gap:10px;color:#94a3b8;font-size:11px;margin:18px 0 0}.divider:before,.divider:after{content:"";height:1px;background:#e2e8f0;flex:1}</style></head><body><form class="card" method="post" action="/login"><h1>TraderScale BI</h1><p>Войдите с рабочей почтой TraderScale</p>${note}${googleButton}<label for="email">Email</label><input id="email" name="email" type="email" autocomplete="username" required autofocus><label for="password">Пароль</label><input id="password" name="password" type="password" autocomplete="current-password" required><button type="submit">Войти</button></form></body></html>`;
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>TraderScale BI</title><style>body{margin:0;background:#f4f7fa;color:#1c2a38;font:14px Inter,Arial,sans-serif;display:grid;place-items:center;min-height:100vh}.card{width:min(360px,calc(100vw - 40px));background:#fff;border:1px solid #dfe7ee;border-radius:12px;padding:30px;box-shadow:0 18px 50px #28435d14}h1{font-size:22px;margin:0 0 8px}p{color:#6b7c8c;line-height:1.5}.error{color:#b42318}label{display:block;font-size:12px;font-weight:600;margin:18px 0 7px}input{box-sizing:border-box;width:100%;height:42px;border:1px solid #cbd6df;border-radius:7px;padding:0 12px}button,.google{box-sizing:border-box;width:100%;height:42px;margin-top:18px;border:0;border-radius:7px;background:#162f46;color:#fff;font-weight:600;cursor:pointer;display:flex;align-items:center;justify-content:center;text-decoration:none}.google{background:#fff;color:#334155;border:1px solid #cbd6df}.google span{font-size:18px;color:#4285f4;margin-right:10px}.divider{display:flex;align-items:center;gap:10px;color:#94a3b8;font-size:11px;margin:18px 0 0}.divider:before,.divider:after{content:"";height:1px;background:#e2e8f0;flex:1}</style></head><body><form class="card" method="post" action="/login"><h1>TraderScale BI</h1><p>Sign in with your authorised TraderScale work email.</p>${note}${googleButton}<label for="email">Email</label><input id="email" name="email" type="email" autocomplete="username" required autofocus><label for="password">Password</label><input id="password" name="password" type="password" autocomplete="current-password" required><button type="submit">Sign in</button></form></body></html>`;
 }
 
 function googleRedirectUri() {
@@ -148,6 +148,7 @@ const server = createServer(async (request, response) => {
       scope: "openid email profile",
       state,
       login_hint: accessEmail,
+      hl: "en",
       prompt: "select_account",
     }).toString();
     response.writeHead(303, {
@@ -167,7 +168,7 @@ const server = createServer(async (request, response) => {
       if (!expectedState || !safeEqual(expectedState, returnedState) || !code) throw new Error("Invalid Google OAuth callback.");
       const email = await googleIdentity(code);
       if (!googleEmailAllowed(email)) {
-        send(response, 403, loginPage("Эта рабочая почта не включена в список доступа."), "text/html; charset=utf-8");
+        send(response, 403, loginPage("This work email is not on the access list."), "text/html; charset=utf-8");
         return;
       }
       response.writeHead(303, {
@@ -181,7 +182,7 @@ const server = createServer(async (request, response) => {
       response.end();
     } catch (error) {
       console.error("Google login failed", error instanceof Error ? error.message : "Unknown error");
-      send(response, 401, loginPage("Не удалось войти через Google. Попробуйте ещё раз."), "text/html; charset=utf-8");
+      send(response, 401, loginPage("Google sign-in failed. Please try again."), "text/html; charset=utf-8");
     }
     return;
   }
@@ -190,7 +191,7 @@ const server = createServer(async (request, response) => {
     const form = new URLSearchParams(await readBody(request));
     const email = (form.get("email") || "").trim().toLowerCase();
     if (!safeEqual(email, accessEmail) || !safeEqual(form.get("password") || "", accessPassword)) {
-      send(response, 401, loginPage("Неверная почта или пароль."), "text/html; charset=utf-8");
+      send(response, 401, loginPage("Incorrect email or password."), "text/html; charset=utf-8");
       return;
     }
     response.writeHead(303, {

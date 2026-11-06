@@ -20,12 +20,12 @@
     },
     "affiliates": {
       "label": "Affiliates",
-      "state": "no_live_data",
+      "state": "live",
       "sources": ["trader_scale.fct_affiliate_order_attribution", "trader_scale.fct_commerce_orders", "trader_scale.dim_affiliate_identity"]
     },
     "customers": {
       "label": "Customer value",
-      "state": "no_live_data",
+      "state": "live",
       "sources": ["trader_scale.dim_commerce_customers", "trader_scale.bridge_commerce_customer_orders", "trader_scale.fct_commerce_orders"]
     },
     "risk": {
@@ -35,7 +35,7 @@
     },
     "profitability": {
       "label": "Owner Overview & Profitability",
-      "state": "no_live_data",
+      "state": "live",
       "sources": ["trader_scale.fct_commerce_orders", "trader_scale.account_profitability"]
     }
   }
