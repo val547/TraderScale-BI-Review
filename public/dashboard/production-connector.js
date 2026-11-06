@@ -711,7 +711,15 @@
       [/sample partners/gi, 'partners'],
       [/this sample/gi, 'the live warehouse'],
       [/demo ledger/gi, 'live ledger'],
-      [/fictional purchase ledger/gi, 'live purchase ledger']
+      [/fictional purchase ledger/gi, 'live purchase ledger'],
+      [/shared fictional payout history/gi, 'live warehouse payout history'],
+      [/paid payouts/gi, 'approved payouts'],
+      [/paid payout/gi, 'approved payout'],
+      [/paid cash/gi, 'approved payout volume'],
+      [/cash paid/gi, 'approved payout volume'],
+      [/settled payments/gi, 'approved payouts'],
+      [/payment settlement dates/gi, 'approval dates'],
+      [/settlement dates/gi, 'approval dates']
     ];
     var root = document.getElementById('page-content');
     if (!root) return;
@@ -879,6 +887,12 @@
     sanitizeProductionCopy();
   }
 
+  function finishBoot() {
+    document.documentElement.classList.remove('production-booting');
+    var boot = document.getElementById('production-boot-screen');
+    if (boot) boot.hidden = true;
+  }
+
   async function start() {
     discardDemoData();
     window.dispatchEvent(new Event('bi:production-ready'));
@@ -896,10 +910,15 @@
       state.error = error;
       state.mode = 'error';
     }
+    if (state.mode === 'error') {
+      var content = document.getElementById('page-content');
+      if (content) content.innerHTML = loadingPage();
+    }
     refreshPresentation();
+    finishBoot();
   }
 
-  window.BIProductionConnector = { state: state, applySnapshot: applySnapshot, start: start, inDateRange: inDateRange, dateLabel: dateLabel };
+  window.BIProductionConnector = { state: state, applySnapshot: applySnapshot, start: start, inDateRange: inDateRange, dateLabel: dateLabel, refreshPresentation: refreshPresentation };
   document.addEventListener('click', function (event) {
     var pageLink = event.target.closest('[data-page]');
     if (pageLink) {

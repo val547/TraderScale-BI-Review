@@ -387,19 +387,23 @@ export async function buildSnapshot(serviceAccountJson: string) {
     };
   });
 
-  const payouts = payoutRows.map((row) => ({
-    id: text(row.payout_id, text(row.payout_nr)), customerId: text(row.customer_id),
-    customerName: text(row.customer_name, "Unknown customer"), account: text(row.account_login),
-    accountId: text(row.account_id),
-    programme: programme({ plan: row.account_plan, plan_category_name: row.account_plan_category_name }),
-    country: text(row.country, "Unknown"), channel: "Unknown",
-    amount: number(row.share_amount || row.request_amount), requestedAt: date(row.requested_at),
-    status: payoutStatus(row.status), method: "Restricted",
-    approvedAt: payoutStatus(row.status) === "Approved" ? date(row.approved_at) : "",
-    paidAt: payoutStatus(row.status) === "Paid" ? date(row.updated_at) : "",
-    rejectedAt: payoutStatus(row.status) === "Rejected" ? date(row.updated_at) : "",
-    decisionAt: ["Approved", "Paid", "Rejected"].includes(payoutStatus(row.status)) ? date(row.updated_at) : "",
-  }));
+  const payouts = payoutRows.map((row) => {
+    const status = payoutStatus(row.status);
+    const approvedAt = ["Approved", "Paid"].includes(status) ? date(row.approved_at) : "";
+    const rejectedAt = status === "Rejected" ? date(row.updated_at) : "";
+    return {
+      id: text(row.payout_id, text(row.payout_nr)), customerId: text(row.customer_id),
+      customerName: text(row.customer_name, "Unknown customer"), account: text(row.account_login),
+      accountId: text(row.account_id),
+      programme: programme({ plan: row.account_plan, plan_category_name: row.account_plan_category_name }),
+      country: text(row.country, "Unknown"), channel: "Unknown",
+      amount: number(row.share_amount || row.request_amount), requestedAt: date(row.requested_at),
+      status, method: "Restricted", approvedAt,
+      paidAt: status === "Paid" ? date(row.updated_at) : "",
+      rejectedAt,
+      decisionAt: approvedAt || rejectedAt,
+    };
+  });
 
   const orders = orderRows.map((row) => ({
     id: `${text(row.store_id)}:${text(row.order_id)}`,
