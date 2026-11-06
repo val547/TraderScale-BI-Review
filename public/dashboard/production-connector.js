@@ -3,7 +3,10 @@
 
   var STATUS_ENDPOINT = 'data/connection-manifest.json';
   var SNAPSHOT_ENDPOINT = '/api/bi/snapshot';
-  var state = { mode: 'loading', manifest: null, snapshot: null, error: null };
+  var state = {
+    mode: 'loading', manifest: null, snapshot: null, error: null,
+    dateStart: '', dateEnd: '', dateAllTime: true, datePickerOpen: false, pendingAllTime: true
+  };
   var DATA_PAGES = new Set([
     'overview', 'revenue', 'accounts', 'pipeline', 'affiliates', 'competitors',
     'pricing', 'rebuy', 'updates', 'ltv', 'client-profit', 'journey',
@@ -65,12 +68,6 @@
     window.BIData.productionQuality = payload.quality || {};
     state.mode = 'production';
     state.snapshot = payload;
-    if (Array.isArray(data.orders) && data.orders.length) {
-      var dates = data.orders.filter(function (row) { return row.revenueEligible; })
-        .map(function (row) { return row.date; }).filter(Boolean).sort();
-      state.ownerEnd = state.ownerEnd || dates[dates.length - 1];
-      state.ownerStart = state.ownerStart || state.ownerEnd.slice(0, 7) + '-01';
-    }
     window.dispatchEvent(new Event('bi:production-ready'));
     window.dispatchEvent(new HashChangeEvent('hashchange'));
     return true;
@@ -96,6 +93,113 @@
     return rows.reduce(function (total, row) { return total + (Number(row[field]) || 0); }, 0);
   }
 
+  function isoDate(value) {
+    return /^\d{4}-\d{2}-\d{2}$/.test(String(value || '')) ? String(value).slice(0, 10) : '';
+  }
+
+  function shiftDate(value, days) {
+    var dateValue = new Date(value + 'T00:00:00Z');
+    dateValue.setUTCDate(dateValue.getUTCDate() + days);
+    return dateValue.toISOString().slice(0, 10);
+  }
+
+  function startOfWeek(value) {
+    var dateValue = new Date(value + 'T00:00:00Z');
+    var day = dateValue.getUTCDay() || 7;
+    return shiftDate(value, 1 - day);
+  }
+
+  function startOfQuarter(value) {
+    var parts = value.split('-');
+    var month = Math.floor((Number(parts[1]) - 1) / 3) * 3 + 1;
+    return parts[0] + '-' + String(month).padStart(2, '0') + '-01';
+  }
+
+  function presetRange(name) {
+    var today = state.snapshot.asOf;
+    var year = today.slice(0, 4);
+    var monthStart = today.slice(0, 7) + '-01';
+    var weekStart = startOfWeek(today);
+    var quarterStart = startOfQuarter(today);
+    if (name === 'today') return { start: today, end: today };
+    if (name === 'yesterday') return { start: shiftDate(today, -1), end: shiftDate(today, -1) };
+    if (/^\d+d$/.test(name)) return { start: shiftDate(today, 1 - Number(name.slice(0, -1))), end: today };
+    if (name === 'this-week') return { start: weekStart, end: today };
+    if (name === 'last-week') return { start: shiftDate(weekStart, -7), end: shiftDate(weekStart, -1) };
+    if (name === 'this-month') return { start: monthStart, end: today };
+    if (name === 'last-month') {
+      var previousMonthEnd = shiftDate(monthStart, -1);
+      return { start: previousMonthEnd.slice(0, 7) + '-01', end: previousMonthEnd };
+    }
+    if (name === 'this-quarter') return { start: quarterStart, end: today };
+    if (name === 'last-quarter') {
+      var previousQuarterEnd = shiftDate(quarterStart, -1);
+      return { start: startOfQuarter(previousQuarterEnd), end: previousQuarterEnd };
+    }
+    if (name === 'this-year') return { start: year + '-01-01', end: today };
+    if (name === 'last-year') return { start: String(Number(year) - 1) + '-01-01', end: String(Number(year) - 1) + '-12-31' };
+    return dateBounds();
+  }
+
+  function dateBounds() {
+    var data = state.snapshot ? state.snapshot.data : {};
+    var values = [];
+    (data.orders || []).forEach(function (row) { if (isoDate(row.date)) values.push(isoDate(row.date)); });
+    (data.accounts || []).forEach(function (row) { if (isoDate(row.openedAt)) values.push(isoDate(row.openedAt)); });
+    (data.payouts || []).forEach(function (row) { if (isoDate(row.requestedAt)) values.push(isoDate(row.requestedAt)); });
+    (data.profitability || []).forEach(function (row) { if (isoDate(row.date)) values.push(isoDate(row.date)); });
+    (data.affiliates || []).forEach(function (row) { if (isoDate(row.date)) values.push(isoDate(row.date)); });
+    values.sort();
+    return { min: values[0] || state.snapshot.asOf, max: values[values.length - 1] || state.snapshot.asOf };
+  }
+
+  function inDateRange(value) {
+    var normalized = isoDate(value);
+    if (!normalized) return false;
+    if (state.dateAllTime) return true;
+    return normalized >= state.dateStart && normalized <= state.dateEnd;
+  }
+
+  function humanDate(value) {
+    if (!value) return '';
+    return new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' })
+      .format(new Date(value + 'T00:00:00Z'));
+  }
+
+  function dateLabel() {
+    return state.dateAllTime ? 'All time' : humanDate(state.dateStart) + ' – ' + humanDate(state.dateEnd);
+  }
+
+  function dateToolbar() {
+    var bounds = dateBounds();
+    var start = state.dateAllTime ? bounds.min : state.dateStart;
+    var end = state.dateAllTime ? bounds.max : state.dateEnd;
+    var presets = [
+      ['all', 'All time'], ['today', 'Today'], ['yesterday', 'Yesterday'], ['7d', 'Last 7 days'],
+      ['14d', 'Last 14 days'], ['30d', 'Last 30 days'], ['90d', 'Last 90 days'],
+      ['this-week', 'This week'], ['last-week', 'Last week'], ['this-month', 'This month'],
+      ['last-month', 'Last month'], ['this-quarter', 'This quarter'], ['last-quarter', 'Last quarter'],
+      ['this-year', 'This year'], ['last-year', 'Last year']
+    ];
+    return '<section class="live-date-filter' + (state.datePickerOpen ? ' open' : '') + '">'
+      + '<button class="live-date-trigger" data-production-action="toggle-date-picker" aria-expanded="' + state.datePickerOpen + '">'
+      + '<span class="live-date-calendar" aria-hidden="true">▦</span><span><small>REPORTING PERIOD</small><strong>' + escapeHtml(dateLabel()) + '</strong></span><b>⌄</b></button>'
+      + (state.datePickerOpen ? '<div class="live-date-popover"><aside class="live-date-presets">'
+        + presets.map(function (preset) { return '<button data-production-preset="' + preset[0] + '" class="' + (preset[0] === 'all' && state.pendingAllTime ? 'active' : '') + '">' + preset[1] + '</button>'; }).join('')
+        + '</aside><div class="live-date-main"><div class="live-date-tabs"><span>Reporting period</span></div>'
+        + '<div class="live-date-summary" id="live-date-summary">' + escapeHtml(state.pendingAllTime ? 'All available warehouse history' : humanDate(start) + ' – ' + humanDate(end)) + '</div>'
+        + '<div class="live-date-fields"><label>From<input id="live-date-start" type="date" min="' + bounds.min + '" max="' + bounds.max + '" value="' + start + '"></label>'
+        + '<span>→</span><label>To<input id="live-date-end" type="date" min="' + bounds.min + '" max="' + bounds.max + '" value="' + end + '"></label></div>'
+        + '<p class="live-date-help">Dates use the warehouse reporting date in UTC.</p>'
+        + '<footer><button class="btn btn-secondary" data-production-action="cancel-date-picker">Cancel</button>'
+        + '<button class="btn btn-primary" data-production-action="apply-date-picker">Apply</button></footer></div></div>' : '')
+      + '</section>';
+  }
+
+  function filteredRows(rows, field) {
+    return (rows || []).filter(function (row) { return inDateRange(row[field]); });
+  }
+
   function liveText(value) {
     return value == null || value === '' ? 'No live data' : String(value);
   }
@@ -113,11 +217,11 @@
   }
 
   function accountsPage() {
-    var rows = state.snapshot.data.accounts || [];
+    var rows = filteredRows(state.snapshot.data.accounts, 'openedAt');
     var active = rows.filter(function (row) { return String(row.status).toLowerCase() === 'active'; });
     var breached = rows.filter(function (row) { return String(row.stage).toLowerCase() === 'breached'; });
     var shown = rows.slice(0, 100);
-    return liveHeader('Account Analytics', rows.length, 'trader_scale account warehouse · snapshot ' + state.snapshot.asOf)
+    return liveHeader('Account Analytics', rows.length, 'Accounts opened in the selected reporting period') + dateToolbar()
       + '<div class="page-kpis">'
       + metric('Accounts', number(rows.length), 'All records returned by the live snapshot')
       + metric('Active', number(active.length), 'Live account status')
@@ -137,11 +241,11 @@
   }
 
   function payoutsPage() {
-    var rows = state.snapshot.data.payouts || [];
+    var rows = filteredRows(state.snapshot.data.payouts, 'requestedAt');
     var paid = rows.filter(function (row) { return String(row.status).toLowerCase() === 'paid'; });
     var approved = rows.filter(function (row) { return String(row.status).toLowerCase() === 'approved'; });
     var shown = rows.slice(0, 100);
-    return liveHeader('Payouts', rows.length, 'trader_scale payout warehouse · snapshot ' + state.snapshot.asOf)
+    return liveHeader('Payouts', rows.length, 'Payout requests created in the selected reporting period') + dateToolbar()
       + '<div class="page-kpis">'
       + metric('Payout records', number(rows.length), 'All records returned by the live snapshot')
       + metric('Total amount', money(sum(rows, 'amount')), 'All live payout statuses')
@@ -162,9 +266,11 @@
 
   function ownerOverviewPage() {
     var all = (state.snapshot.data.orders || []).filter(function (row) { return row.revenueEligible; });
-    var start = state.ownerStart || '';
-    var end = state.ownerEnd || '';
-    var rows = all.filter(function (row) { return row.date >= start && row.date <= end; });
+    var rows = all.filter(function (row) { return inDateRange(row.date); });
+    var rowDates = rows.map(function (row) { return row.date; }).filter(Boolean).sort();
+    var range = state.dateAllTime
+      ? { min: rowDates[0] || dateBounds().min, max: rowDates[rowDates.length - 1] || dateBounds().max }
+      : { min: state.dateStart, max: state.dateEnd };
     var customers = new Set(rows.map(function (row) { return row.customerId; }).filter(Boolean));
     var newCustomers = new Set(rows.filter(function (row) { return row.isNewCustomer; }).map(function (row) { return row.customerId; }));
     var daily = {};
@@ -176,17 +282,14 @@
       daily[row.date].netRevenue += Number(row.netRevenue) || 0;
     });
     var days = Object.keys(daily).sort().reverse().map(function (key) { return daily[key]; });
-    return liveHeader('Owner overview', rows.length, 'Canonical eligible orders · UTC · USD')
-      + '<section class="live-range"><label>From <input type="date" id="owner-live-start" value="' + escapeHtml(start) + '"></label>'
-      + '<label>To <input type="date" id="owner-live-end" value="' + escapeHtml(end) + '"></label>'
-      + '<button class="btn btn-primary" data-production-action="apply-owner-range">Apply</button></section>'
+    return liveHeader('Owner overview', rows.length, 'Canonical eligible orders · UTC · USD') + dateToolbar()
       + '<div class="page-kpis">'
       + metric('Net revenue', money(sum(rows, 'netRevenue')), 'Gross revenue less linked refunds')
       + metric('Gross revenue', money(sum(rows, 'grossRevenue')), number(rows.length) + ' eligible orders')
       + metric('Paying customers', number(customers.size), 'Distinct canonical commerce customers')
       + metric('New / existing', number(newCustomers.size) + ' / ' + number(Math.max(0, customers.size - newCustomers.size)), 'Based on first-ever eligible order')
       + '</div><section class="panel"><div class="panel-header"><div><h2 class="panel-title">Daily revenue</h2>'
-      + '<p class="panel-subtitle">' + escapeHtml(start) + ' – ' + escapeHtml(end) + ' · fct_commerce_orders</p></div></div>'
+      + '<p class="panel-subtitle">' + escapeHtml(range.min) + ' – ' + escapeHtml(range.max) + ' · fct_commerce_orders</p></div></div>'
       + '<div class="table-wrap"><table class="data-table"><thead><tr><th>Date</th><th class="numeric">Orders</th>'
       + '<th class="numeric">Gross revenue</th><th class="numeric">Refunded</th><th class="numeric">Net revenue</th></tr></thead><tbody>'
       + days.map(function (row) { return '<tr><td>' + escapeHtml(row.date) + '</td><td class="numeric">' + number(row.orders)
@@ -197,8 +300,17 @@
   }
 
   function profitabilityPage() {
-    var rows = state.snapshot.data.profitability || [];
-    return liveHeader('Profitability', rows.length, 'Attempt-grain account_profitability · all available history')
+    var dated = filteredRows(state.snapshot.data.profitability, 'date');
+    var groups = {};
+    dated.forEach(function (row) {
+      var key = row.programme + '|' + row.accountSize;
+      if (!groups[key]) groups[key] = { programme: row.programme, accountSize: row.accountSize, attempts: 0, fundedAttempts: 0, revenue: 0, discount: 0, payoutCount: 0, payouts: 0, grossProfit: 0 };
+      ['attempts', 'fundedAttempts', 'revenue', 'discount', 'payoutCount', 'payouts', 'grossProfit'].forEach(function (field) {
+        groups[key][field] += Number(row[field]) || 0;
+      });
+    });
+    var rows = Object.keys(groups).map(function (key) { return groups[key]; }).sort(function (a, b) { return b.revenue - a.revenue; });
+    return liveHeader('Profitability', sum(dated, 'attempts'), 'Attempt-grain account_profitability · selected start dates') + dateToolbar()
       + '<div class="page-kpis">'
       + metric('Revenue', money(sum(rows, 'revenue')), number(sum(rows, 'attempts')) + ' attempts')
       + metric('Approved payouts', money(sum(rows, 'payouts')), number(sum(rows, 'payoutCount')) + ' payouts')
@@ -215,8 +327,27 @@
   }
 
   function affiliatesPage() {
-    var rows = state.snapshot.data.affiliates || [];
-    return liveHeader('Affiliates', rows.length, 'Canonical order attribution · all eligible orders')
+    var dated = filteredRows(state.snapshot.data.affiliates, 'date');
+    var groups = {};
+    dated.forEach(function (row) {
+      var key = row.id + '|' + row.status;
+      if (!groups[key]) groups[key] = { id: row.id, name: row.name, status: row.status, orders: 0, customerIds: {}, newCustomerIds: {}, grossRevenue: 0, netRevenue: 0, conflictOrders: 0 };
+      var group = groups[key];
+      group.orders += 1;
+      if (row.customerId) group.customerIds[row.customerId] = true;
+      if (row.isNewCustomer && row.customerId) group.newCustomerIds[row.customerId] = true;
+      group.grossRevenue += Number(row.grossRevenue) || 0;
+      group.netRevenue += Number(row.netRevenue) || 0;
+      if (row.hasConflict) group.conflictOrders += 1;
+    });
+    var rows = Object.keys(groups).map(function (key) {
+      var row = groups[key];
+      row.customers = Object.keys(row.customerIds).length;
+      row.newCustomers = Object.keys(row.newCustomerIds).length;
+      return row;
+    }).sort(function (a, b) { return b.netRevenue - a.netRevenue; });
+    return liveHeader('Affiliates', rows.length, 'Canonical order attribution · selected eligible orders')
+      + dateToolbar()
       + '<div class="page-kpis">' + metric('Attributed net revenue', money(sum(rows.filter(function (r) { return r.status === 'attributed'; }), 'netRevenue')), 'Production v6 attribution')
       + metric('Affiliate orders', number(sum(rows.filter(function (r) { return r.status === 'attributed'; }), 'orders')), 'Attributed eligible orders')
       + metric('New customers', number(sum(rows.filter(function (r) { return r.status === 'attributed'; }), 'newCustomers')), 'First-ever canonical orders')
@@ -232,9 +363,22 @@
   }
 
   function customersPage() {
-    var rows = state.snapshot.data.customers || [];
+    var profiles = {};
+    (state.snapshot.data.customers || []).forEach(function (row) { profiles[row.id] = row; });
+    var values = {};
+    filteredRows((state.snapshot.data.orders || []).filter(function (row) { return row.revenueEligible; }), 'date').forEach(function (order) {
+      if (!order.customerId) return;
+      if (!values[order.customerId]) values[order.customerId] = { completedOrderCount: 0, revenue: 0, lastOrderAt: '' };
+      values[order.customerId].completedOrderCount += 1;
+      values[order.customerId].revenue += Number(order.netRevenue) || 0;
+      if (order.date > values[order.customerId].lastOrderAt) values[order.customerId].lastOrderAt = order.date;
+    });
+    var rows = Object.keys(values).map(function (id) {
+      var profile = profiles[id] || { id: id, name: 'No live data', country: 'No live data', status: 'No live data', accountCount: 0, kycVerified: false };
+      return Object.assign({}, profile, values[id]);
+    }).sort(function (a, b) { return b.revenue - a.revenue; });
     var shown = rows.slice(0, 200);
-    return liveHeader('Customer value', rows.length, 'Canonical commerce customers · live rollups')
+    return liveHeader('Customer value', rows.length, 'Canonical commerce customers · selected eligible orders') + dateToolbar()
       + '<div class="page-kpis">' + metric('Commerce customers', number(rows.length), 'Registered, matched, guest and anonymous identities')
       + metric('Customer revenue', money(sum(rows, 'revenue')), 'Canonical eligible-order revenue')
       + metric('Completed orders', number(sum(rows, 'completedOrderCount')), 'Commerce customer rollup')
@@ -344,7 +488,7 @@
     var content = document.getElementById('page-content');
     if (!content || (!DATA_PAGES.has(page) && page !== 'health')) return;
     var viewKey = state.mode + ':' + page + ':' + (state.snapshot ? state.snapshot.asOf : '')
-      + ':' + (state.ownerStart || '') + ':' + (state.ownerEnd || '');
+      + ':' + state.dateAllTime + ':' + state.dateStart + ':' + state.dateEnd + ':' + state.datePickerOpen;
     if (content.getAttribute('data-production-view') === viewKey
         && content.querySelector(':scope > [data-production-root]')) return;
     hideLegacyControls(page);
@@ -397,6 +541,7 @@
     var style = document.createElement('style');
     style.id = 'production-only-styles';
     style.textContent = '.live-source-banner{display:flex;justify-content:space-between;align-items:center;gap:24px;padding:22px 24px;margin-bottom:18px;border:1px solid #dce9e3;border-radius:9px;background:#f8fcfa}.live-source-kicker,.no-live-kicker{display:block;font-size:9px;font-weight:700;letter-spacing:1.2px;color:#3f8b69}.live-source-banner h2{margin:7px 0 5px;font-size:20px}.live-source-banner p{margin:0;color:#7b8793;font-size:10px}.live-source-count{text-align:right}.live-source-count strong{display:block;font-size:25px}.live-source-count span{font-size:9px;color:#7b8793}.live-range{display:flex;align-items:end;gap:12px;padding:16px 18px;margin-bottom:18px;border:1px solid #e2e7eb;border-radius:8px;background:#fff}.live-range label{display:flex;flex-direction:column;gap:6px;font-size:10px;color:#74808b}.live-range input{height:35px;border:1px solid #d7dfe5;border-radius:6px;padding:0 9px;color:#425466}.live-range .btn{height:35px}.no-live-data{min-height:360px;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:48px 24px;border:1px solid #e2e6ea;border-radius:10px;background:#fff}.no-live-icon{display:grid;place-items:center;width:44px;height:44px;border-radius:50%;background:#f2f4f6;color:#8b96a1;font-size:22px;margin-bottom:18px}.no-live-data h2{font-size:26px;margin:9px 0 10px}.no-live-data p:not(.no-live-kicker){max-width:520px;margin:0;color:#75818c;line-height:1.7}.no-live-data small{margin-top:14px;color:#9aa3ab}.demo-badge{border-color:#bcdcca!important;background:#f5fbf7!important;color:#337d5d!important}.demo-badge:before{background:#42a477!important}@media(max-width:720px){.live-source-banner{align-items:flex-start}.live-source-count{display:none}.live-range{align-items:stretch;flex-direction:column}}';
+    style.textContent += '.live-date-filter{position:relative;display:flex;justify-content:flex-end;margin:-4px 0 18px;z-index:15}.live-date-trigger{display:flex;align-items:center;gap:11px;min-width:250px;padding:10px 13px;border:1px solid #dfe5ea;border-radius:8px;background:#fff;color:#536577;text-align:left;box-shadow:0 1px 2px #23364b0a}.live-date-trigger:hover,.live-date-filter.open .live-date-trigger{border-color:#efad88;box-shadow:0 0 0 3px #f4773512}.live-date-trigger>span:nth-child(2){display:flex;flex:1;flex-direction:column;gap:2px}.live-date-trigger small{font-size:8px;letter-spacing:1px;color:#9aa6b1}.live-date-trigger strong{font-size:12px;font-weight:600;color:#425466}.live-date-trigger b{font-size:14px;color:#8b98a5}.live-date-calendar{display:grid;place-items:center;width:29px;height:29px;border-radius:7px;background:#fff1e8;color:#e26f35;font-size:17px}.live-date-popover{position:absolute;top:58px;right:0;display:grid;grid-template-columns:180px minmax(430px,1fr);width:min(760px,calc(100vw - 290px));min-height:390px;overflow:hidden;border:1px solid #e0e5ea;border-radius:12px;background:#fff;box-shadow:0 18px 55px #24394f24}.live-date-presets{padding:16px 12px;border-right:1px solid #e8ecf0;overflow:auto;max-height:470px}.live-date-presets button{display:block;width:100%;padding:8px 12px;border-radius:6px;color:#617184;font-size:12px;font-weight:550;text-align:left}.live-date-presets button:hover{background:#fff6f0;color:#d96831}.live-date-presets button.active{background:#f47735;color:#fff}.live-date-main{display:flex;flex-direction:column;padding:23px 26px 18px}.live-date-tabs{display:flex;justify-content:center;margin-bottom:24px}.live-date-tabs span{padding:9px 20px;border-radius:8px;background:#f47735;color:#fff;font-size:12px;font-weight:650}.live-date-summary{text-align:center;color:#4f6072;font-size:15px;font-weight:650;margin-bottom:28px}.live-date-fields{display:grid;grid-template-columns:1fr auto 1fr;align-items:end;gap:15px;padding:24px;border:1px solid #e7ebef;border-radius:10px;background:#fafbfc}.live-date-fields label{display:flex;flex-direction:column;gap:8px;color:#718091;font-size:10px;font-weight:600;letter-spacing:.4px;text-transform:uppercase}.live-date-fields input{width:100%;height:42px;padding:0 11px;border:1px solid #dbe2e8;border-radius:7px;background:#fff;color:#35485c;font-family:inherit;font-size:12px;font-weight:600;color-scheme:light}.live-date-fields>span{padding-bottom:12px;color:#a0abb5}.live-date-help{margin:14px 2px;color:#96a1ac;font-size:10px}.live-date-main footer{display:flex;justify-content:flex-end;gap:10px;margin-top:auto;padding-top:20px;border-top:1px solid #edf0f3}.live-date-main footer .btn{min-width:92px}@media(max-width:850px){.live-date-popover{position:fixed;top:90px;left:18px;right:18px;width:auto;grid-template-columns:145px 1fr}.live-date-trigger{min-width:220px}}@media(max-width:620px){.live-date-popover{grid-template-columns:1fr;max-height:75vh;overflow:auto}.live-date-presets{display:flex;gap:6px;overflow:auto;border-right:0;border-bottom:1px solid #e8ecf0}.live-date-presets button{width:auto;white-space:nowrap}.live-date-main{padding:18px}.live-date-fields{grid-template-columns:1fr}.live-date-fields>span{display:none}}';
     document.head.appendChild(style);
   }
 
@@ -434,14 +579,52 @@
       setTimeout(refreshPresentation, 0);
       return;
     }
-    var button = event.target.closest('[data-production-action="apply-owner-range"]');
+    var preset = event.target.closest('[data-production-preset]');
+    if (preset) {
+      var range = presetRange(preset.getAttribute('data-production-preset'));
+      var startInput = document.getElementById('live-date-start');
+      var endInput = document.getElementById('live-date-end');
+      state.pendingAllTime = preset.getAttribute('data-production-preset') === 'all';
+      if (startInput) startInput.value = range.start || range.min;
+      if (endInput) endInput.value = range.end || range.max;
+      document.querySelectorAll('[data-production-preset]').forEach(function (item) { item.classList.toggle('active', item === preset); });
+      var summary = document.getElementById('live-date-summary');
+      if (summary) summary.textContent = state.pendingAllTime ? 'All available warehouse history' : humanDate(startInput.value) + ' – ' + humanDate(endInput.value);
+      return;
+    }
+    var button = event.target.closest('[data-production-action]');
     if (!button) return;
-    var start = document.getElementById('owner-live-start');
-    var end = document.getElementById('owner-live-end');
-    if (!start || !end || !start.value || !end.value || start.value > end.value) return;
-    state.ownerStart = start.value;
-    state.ownerEnd = end.value;
-    enforceProductionView();
+    var action = button.getAttribute('data-production-action');
+    if (action === 'toggle-date-picker') {
+      state.datePickerOpen = !state.datePickerOpen;
+      state.pendingAllTime = state.dateAllTime;
+      enforceProductionView();
+      return;
+    }
+    if (action === 'cancel-date-picker') {
+      state.datePickerOpen = false;
+      enforceProductionView();
+      return;
+    }
+    if (action === 'apply-date-picker') {
+      var start = document.getElementById('live-date-start');
+      var end = document.getElementById('live-date-end');
+      if (!start || !end || !start.value || !end.value || start.value > end.value) return;
+      state.dateAllTime = state.pendingAllTime;
+      state.dateStart = start.value;
+      state.dateEnd = end.value;
+      state.datePickerOpen = false;
+      enforceProductionView();
+    }
+  });
+  document.addEventListener('input', function (event) {
+    if (event.target.id !== 'live-date-start' && event.target.id !== 'live-date-end') return;
+    state.pendingAllTime = false;
+    document.querySelectorAll('[data-production-preset]').forEach(function (item) { item.classList.remove('active'); });
+    var start = document.getElementById('live-date-start');
+    var end = document.getElementById('live-date-end');
+    var summary = document.getElementById('live-date-summary');
+    if (summary && start && end && start.value && end.value) summary.textContent = humanDate(start.value) + ' – ' + humanDate(end.value);
   });
   window.addEventListener('hashchange', function () { setTimeout(refreshPresentation, 0); });
   var refreshScheduled = false;

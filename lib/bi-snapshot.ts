@@ -289,7 +289,8 @@ ORDER BY order_reporting_date DESC, order_id
 `;
 
 const PROFITABILITY_SQL = `
-SELECT COALESCE(plan, 'Unknown') AS plan,
+SELECT attempt_started_at_date,
+  COALESCE(plan, 'Unknown') AS plan,
   COALESCE(
     SAFE_CAST(NULLIF(REGEXP_REPLACE(plan_size, r'[^0-9.]', ''), '') AS NUMERIC)
       * IF(REGEXP_CONTAINS(UPPER(plan_size), r'K'), 1000, 1),
@@ -302,29 +303,28 @@ SELECT COALESCE(plan, 'Unknown') AS plan,
   SUM(COALESCE(payouts, 0)) AS payouts,
   SUM(COALESCE(gross_profit, 0)) AS gross_profit
 FROM \`trader-scale-486213.trader_scale.account_profitability\`
-GROUP BY 1, 2
+GROUP BY 1, 2, 3
 ORDER BY revenue DESC
 `;
 
 const AFFILIATES_SQL = `
 WITH eligible_orders AS (
-  SELECT store_id, order_id, gross_revenue_usd, net_revenue_usd
+  SELECT store_id, order_id, order_reporting_date, gross_revenue_usd, net_revenue_usd
   FROM \`trader-scale-486213.trader_scale.fct_commerce_orders\`
   WHERE is_revenue_eligible
 )
-SELECT COALESCE(a.affiliate_id, 'unattributed') AS affiliate_id,
+SELECT o.order_reporting_date,
+  COALESCE(a.affiliate_id, 'unattributed') AS affiliate_id,
   COALESCE(a.affiliate_name_at_order, 'Unattributed') AS affiliate_name,
   COALESCE(a.attribution_status, 'unattributed') AS attribution_status,
-  COUNT(*) AS orders, COUNT(DISTINCT a.customer_id) AS customers,
-  COUNTIF(a.is_new_customer_order) AS new_customers,
-  SUM(o.gross_revenue_usd) AS gross_revenue,
-  SUM(o.net_revenue_usd) AS net_revenue,
-  COUNTIF(NULLIF(TRIM(a.conflict_state), '') IS NOT NULL) AS conflict_orders
+  a.customer_id, a.is_new_customer_order,
+  o.gross_revenue_usd AS gross_revenue,
+  o.net_revenue_usd AS net_revenue,
+  NULLIF(TRIM(a.conflict_state), '') IS NOT NULL AS has_conflict
 FROM eligible_orders AS o
 LEFT JOIN \`trader-scale-486213.trader_scale.fct_affiliate_order_attribution\` AS a
   USING (store_id, order_id)
-GROUP BY affiliate_id, affiliate_name, attribution_status
-ORDER BY net_revenue DESC
+ORDER BY o.order_reporting_date DESC, net_revenue DESC
 `;
 
 const CUSTOMERS_SQL = `
@@ -411,16 +411,16 @@ export async function buildSnapshot(serviceAccountJson: string) {
   const maxEligibleOrderDate = eligibleOrders.map((row) => row.date).filter(Boolean).sort().at(-1) || "unknown";
 
   const profitability = profitabilityRows.map((row) => ({
-    programme: programme(row), accountSize: number(row.plan_size), attempts: number(row.attempts),
+    date: date(row.attempt_started_at_date), programme: programme(row), accountSize: number(row.plan_size), attempts: number(row.attempts),
     fundedAttempts: number(row.funded_attempts), revenue: number(row.revenue), discount: number(row.discount),
     payoutCount: number(row.payout_count), payouts: number(row.payouts), grossProfit: number(row.gross_profit),
   }));
 
   const affiliates = affiliateRows.map((row) => ({
-    id: text(row.affiliate_id), name: text(row.affiliate_name), status: text(row.attribution_status),
-    orders: number(row.orders), customers: number(row.customers), newCustomers: number(row.new_customers),
+    date: date(row.order_reporting_date), id: text(row.affiliate_id), name: text(row.affiliate_name), status: text(row.attribution_status),
+    customerId: text(row.customer_id), isNewCustomer: row.is_new_customer_order === true || text(row.is_new_customer_order) === "true",
     grossRevenue: number(row.gross_revenue), netRevenue: number(row.net_revenue),
-    conflictOrders: number(row.conflict_orders),
+    hasConflict: row.has_conflict === true || text(row.has_conflict) === "true",
   }));
 
   const customers = customerRows.map((row) => ({
