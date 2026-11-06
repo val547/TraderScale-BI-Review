@@ -221,8 +221,9 @@ const server = createServer(async (request, response) => {
       response.writeHead(200, { ...securityHeaders(), "content-type": "application/json; charset=utf-8", "cache-control": "private, max-age=0" });
       response.end(JSON.stringify(snapshotCache.value));
     } catch (error) {
-      console.error("BI snapshot failed", error instanceof Error ? error.message : "Unknown error");
-      send(response, 503, JSON.stringify({ error: "Production data is temporarily unavailable." }), "application/json; charset=utf-8");
+      const detail = error instanceof Error ? error.message : "Unknown error";
+      console.error("BI snapshot failed", detail);
+      send(response, 503, JSON.stringify({ error: "Production data is temporarily unavailable.", detail }), "application/json; charset=utf-8");
     }
     return;
   }

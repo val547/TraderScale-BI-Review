@@ -27,7 +27,8 @@ export async function GET() {
     cachedSnapshot = { expiresAt: Date.now() + 5 * 60 * 1000, value };
     return json(value);
   } catch (error) {
-    console.error("BI snapshot failed", error instanceof Error ? error.message : "Unknown error");
-    return json({ error: "Production data is temporarily unavailable." }, 503);
+    const detail = error instanceof Error ? error.message : "Unknown error";
+    console.error("BI snapshot failed", detail);
+    return json({ error: "Production data is temporarily unavailable.", detail }, 503);
   }
 }
