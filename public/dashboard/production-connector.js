@@ -61,6 +61,12 @@
       badge.title = partial
         ? 'Live production data is enabled for selected screens. Open Data health for coverage details.'
         : 'Production snapshot loaded through the read-only BI API.';
+      var sidebarVersion = document.querySelector('.sidebar-version');
+      if (sidebarVersion) sidebarVersion.innerHTML = '<span class="version-dot"></span> Live warehouse data <span>v0.15</span>';
+      var footerCopy = document.querySelector('.workspace-footer > span');
+      if (footerCopy) footerCopy.textContent = partial
+        ? 'TraderScale BI / Live warehouse data · Partial screen coverage.'
+        : 'TraderScale BI / Live warehouse data.';
     } else if (state.manifest) {
       badge.textContent = 'DEMO FALLBACK';
       badge.title = 'Production sources are mapped. Read-only credentials or a Warehouse API are still required.';
