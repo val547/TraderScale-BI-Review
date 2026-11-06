@@ -722,6 +722,26 @@
       replacements.forEach(function (item) { value = value.replace(item[0], item[1]); });
       if (value !== node.nodeValue) node.nodeValue = value;
     }
+    var changeSummary = root.querySelector('.changes-summary p');
+    if (changeSummary) changeSummary.textContent = 'Use the date filter to choose a period with complete preceding history.';
+    var changesEmpty = root.querySelector('.changes-empty');
+    if (changesEmpty) {
+      var changesCopy = changesEmpty.querySelector('p');
+      var changesButton = changesEmpty.querySelector('button');
+      if (changesCopy) changesCopy.textContent = 'Choose a reporting period with a complete equal-length preceding period. Missing history is never treated as zero.';
+      if (changesButton) { changesButton.textContent = 'Open date filter'; changesButton.removeAttribute('data-action'); changesButton.removeAttribute('data-value'); changesButton.setAttribute('data-production-action', 'toggle-date-picker'); }
+    }
+    if (state.dateAllTime) {
+      var overviewSalesCard = Array.from(root.querySelectorAll('.kpi-card')).find(function (card) {
+        var label = card.querySelector('.kpi-label'); return label && label.textContent.trim() === 'Net sales';
+      });
+      var salesChange = overviewSalesCard && overviewSalesCard.querySelector('.kpi-change');
+      if (salesChange) salesChange.textContent = 'Comparison unavailable for All time';
+      root.querySelectorAll('.mix-comparison').forEach(function (value) { value.textContent = 'Previous period unavailable'; });
+    }
+    root.querySelectorAll('button').forEach(function (button) {
+      if (button.textContent.trim() === 'Compare October with September') button.textContent = 'Choose a reporting period';
+    });
     if (!window.BIThoughtMetricData) {
       var channelBadge = root.querySelector('.channels-source-badge');
       var channelTotal = root.querySelector('.channels-chart-meta strong');
@@ -742,6 +762,75 @@
       if (profitValue) profitValue.textContent = 'Unavailable';
       if (profitChange) profitChange.textContent = 'Cost data not connected';
       if (profitBaseline) profitBaseline.textContent = '';
+    }
+    root.querySelectorAll('.kpi-card').forEach(function (card) {
+      var label = card.querySelector('.kpi-label');
+      if (!label || !/Accrued reward estimate/i.test(label.textContent)) return;
+      var value = card.querySelector('.kpi-value');
+      var note = card.querySelector('.kpi-note');
+      if (value) value.textContent = 'Unavailable';
+      if (note) note.textContent = 'Live reward eligibility estimate is not connected';
+    });
+    root.querySelectorAll('.econ-page .kpi-card').forEach(function (card) {
+      var label = card.querySelector('.kpi-label');
+      if (!label || !/(profit|margin)/i.test(label.textContent)) return;
+      var value = card.querySelector('.kpi-value');
+      var note = card.querySelector('.kpi-note');
+      if (value) value.textContent = 'Unavailable';
+      if (note) note.textContent = 'Live direct-cost data is not connected';
+    });
+    root.querySelectorAll('.econ-page .econ-table tr').forEach(function (row) {
+      [4, 5, 6, 7].forEach(function (position) {
+        var cell = row.querySelector('td:nth-child(' + position + ')');
+        if (cell) cell.textContent = 'Unavailable';
+      });
+    });
+    root.querySelectorAll('.econ-page .econ-waterfall-row.cost strong,.econ-page .econ-waterfall-row.total strong').forEach(function (value) {
+      value.textContent = 'Unavailable';
+    });
+    root.querySelectorAll('.afg-page .kpi-card').forEach(function (card) {
+      var label = card.querySelector('.kpi-label');
+      if (!label || !/(p&l|profit|commission|margin|cost|cac)/i.test(label.textContent)) return;
+      var value = card.querySelector('.kpi-value');
+      if (value) value.textContent = 'Unavailable';
+    });
+    var competitor = root.querySelector('.competitor-monitor,.competitor-page');
+    if (competitor) {
+      if (!competitor.querySelector('.production-missing-source')) competitor.insertAdjacentHTML('afterbegin', '<div class="production-missing-source"><strong>No live data</strong><span>Competitor monitoring source is not connected.</span></div>');
+      competitor.querySelectorAll('.cm-kpis article').forEach(function (card) {
+        var value = card.querySelector('strong');
+        var note = card.querySelector('small');
+        if (value) value.textContent = 'Unavailable';
+        if (note) note.textContent = 'No live data';
+      });
+      competitor.querySelectorAll('.cm-firm-group h3,.cm-attention-items strong,.cm-attention-items span,.cm-change-row strong,.cm-change-row .cm-compare-cell span').forEach(function (value) { value.textContent = 'No live data'; });
+      competitor.querySelectorAll('.cm-schedule-state,.cm-preview-banner strong,.cm-run-note strong').forEach(function (value) { value.textContent = 'No live data'; });
+    }
+    var health = root.querySelector('.health-summary');
+    if (health) {
+      var healthTitle = health.querySelector('h2');
+      var healthCopy = health.querySelector('p');
+      var healthBadge = health.querySelector('.badge');
+      if (healthTitle) healthTitle.textContent = 'Live warehouse data is connected';
+      if (healthCopy) healthCopy.textContent = 'Production orders, accounts, payouts, customers and affiliate attribution are loaded from the warehouse.';
+      if (healthBadge) healthBadge.textContent = 'LIVE DATA';
+      root.querySelectorAll('.connection-row').forEach(function (row) {
+        var name = row.querySelector('.connection-text strong');
+        var badge = row.querySelector('.badge');
+        var live = name && !/Risk signal|Retention review/i.test(name.textContent);
+        if (badge) badge.textContent = live ? 'LIVE' : 'NO LIVE DATA';
+      });
+    }
+    var workspacePanel = Array.from(root.querySelectorAll('.panel')).find(function (panel) { return /Prototype workspace/i.test(panel.textContent); });
+    if (workspacePanel) {
+      var workspaceTitle = workspacePanel.querySelector('.panel-title');
+      var workspaceHeading = workspacePanel.querySelector('.panel-body h3');
+      var workspaceCopy = workspacePanel.querySelector('.panel-body p');
+      var resetButton = workspacePanel.querySelector('[data-action="reset-demo"]');
+      if (workspaceTitle) workspaceTitle.textContent = 'Production workspace';
+      if (workspaceHeading) workspaceHeading.textContent = 'Live data only';
+      if (workspaceCopy) workspaceCopy.textContent = 'Filters and reports use connected warehouse records. Generated fallback business values are disabled.';
+      if (resetButton) { resetButton.textContent = 'Demo data disabled'; resetButton.disabled = true; }
     }
   }
 
@@ -779,7 +868,7 @@
     var style = document.createElement('style');
     style.id = 'production-only-styles';
     style.textContent = '.live-source-banner{display:flex;justify-content:space-between;align-items:center;gap:24px;padding:22px 24px;margin-bottom:18px;border:1px solid #dce9e3;border-radius:9px;background:#f8fcfa}.live-source-kicker,.no-live-kicker{display:block;font-size:9px;font-weight:700;letter-spacing:1.2px;color:#3f8b69}.live-source-banner h2{margin:7px 0 5px;font-size:20px}.live-source-banner p{margin:0;color:#7b8793;font-size:10px}.live-source-count{text-align:right}.live-source-count strong{display:block;font-size:25px}.live-source-count span{font-size:9px;color:#7b8793}.live-range{display:flex;align-items:end;gap:12px;padding:16px 18px;margin-bottom:18px;border:1px solid #e2e7eb;border-radius:8px;background:#fff}.live-range label{display:flex;flex-direction:column;gap:6px;font-size:10px;color:#74808b}.live-range input{height:35px;border:1px solid #d7dfe5;border-radius:6px;padding:0 9px;color:#425466}.live-range .btn{height:35px}.no-live-data{min-height:360px;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:48px 24px;border:1px solid #e2e6ea;border-radius:10px;background:#fff}.no-live-icon{display:grid;place-items:center;width:44px;height:44px;border-radius:50%;background:#f2f4f6;color:#8b96a1;font-size:22px;margin-bottom:18px}.no-live-data h2{font-size:26px;margin:9px 0 10px}.no-live-data p:not(.no-live-kicker){max-width:520px;margin:0;color:#75818c;line-height:1.7}.no-live-data small{margin-top:14px;color:#9aa3ab}.demo-badge{border-color:#bcdcca!important;background:#f5fbf7!important;color:#337d5d!important}.demo-badge:before{background:#42a477!important}@media(max-width:720px){.live-source-banner{align-items:flex-start}.live-source-count{display:none}.live-range{align-items:stretch;flex-direction:column}}';
-    style.textContent += '.live-date-filter{position:relative;display:flex;justify-content:flex-end;margin:-4px 0 18px;z-index:15}.live-date-trigger{display:flex;align-items:center;gap:11px;min-width:250px;padding:10px 13px;border:1px solid #dfe5ea;border-radius:8px;background:#fff;color:#536577;text-align:left;box-shadow:0 1px 2px #23364b0a}.live-date-trigger:hover,.live-date-filter.open .live-date-trigger{border-color:#efad88;box-shadow:0 0 0 3px #f4773512}.live-date-trigger>span:nth-child(2){display:flex;flex:1;flex-direction:column;gap:2px}.live-date-trigger small{font-size:8px;letter-spacing:1px;color:#9aa6b1}.live-date-trigger strong{font-size:12px;font-weight:600;color:#425466}.live-date-trigger b{font-size:14px;color:#8b98a5}.live-date-calendar{display:grid;place-items:center;width:29px;height:29px;border-radius:7px;background:#fff1e8;color:#e26f35;font-size:17px}.live-date-popover{position:absolute;top:58px;right:0;display:grid;grid-template-columns:180px minmax(430px,1fr);width:min(760px,calc(100vw - 290px));min-height:390px;overflow:hidden;border:1px solid #e0e5ea;border-radius:12px;background:#fff;box-shadow:0 18px 55px #24394f24}.live-date-presets{padding:16px 12px;border-right:1px solid #e8ecf0;overflow:auto;max-height:470px}.live-date-presets button{display:block;width:100%;padding:8px 12px;border-radius:6px;color:#617184;font-size:12px;font-weight:550;text-align:left}.live-date-presets button:hover{background:#fff6f0;color:#d96831}.live-date-presets button.active{background:#f47735;color:#fff}.live-date-main{display:flex;flex-direction:column;padding:23px 26px 18px}.live-date-tabs{display:flex;justify-content:center;margin-bottom:24px}.live-date-tabs span{padding:9px 20px;border-radius:8px;background:#f47735;color:#fff;font-size:12px;font-weight:650}.live-date-summary{text-align:center;color:#4f6072;font-size:15px;font-weight:650;margin-bottom:28px}.live-date-fields{display:grid;grid-template-columns:1fr auto 1fr;align-items:end;gap:15px;padding:24px;border:1px solid #e7ebef;border-radius:10px;background:#fafbfc}.live-date-fields label{display:flex;flex-direction:column;gap:8px;color:#718091;font-size:10px;font-weight:600;letter-spacing:.4px;text-transform:uppercase}.live-date-fields input{width:100%;height:42px;padding:0 11px;border:1px solid #dbe2e8;border-radius:7px;background:#fff;color:#35485c;font-family:inherit;font-size:12px;font-weight:600;color-scheme:light}.live-date-fields>span{padding-bottom:12px;color:#a0abb5}.live-date-help{margin:14px 2px;color:#96a1ac;font-size:10px}.live-date-main footer{display:flex;justify-content:flex-end;gap:10px;margin-top:auto;padding-top:20px;border-top:1px solid #edf0f3}.live-date-main footer .btn{min-width:92px}@media(max-width:850px){.live-date-popover{position:fixed;top:90px;left:18px;right:18px;width:auto;grid-template-columns:145px 1fr}.live-date-trigger{min-width:220px}}@media(max-width:620px){.live-date-popover{grid-template-columns:1fr;max-height:75vh;overflow:auto}.live-date-presets{display:flex;gap:6px;overflow:auto;border-right:0;border-bottom:1px solid #e8ecf0}.live-date-presets button{width:auto;white-space:nowrap}.live-date-main{padding:18px}.live-date-fields{grid-template-columns:1fr}.live-date-fields>span{display:none}}';
+    style.textContent += '.live-date-filter{position:relative;display:flex;justify-content:flex-end;margin:-4px 0 18px;z-index:15}.live-date-trigger{display:flex;align-items:center;gap:11px;min-width:250px;padding:10px 13px;border:1px solid #dfe5ea;border-radius:8px;background:#fff;color:#536577;text-align:left;box-shadow:0 1px 2px #23364b0a}.live-date-trigger:hover,.live-date-filter.open .live-date-trigger{border-color:#efad88;box-shadow:0 0 0 3px #f4773512}.live-date-trigger>span:nth-child(2){display:flex;flex:1;flex-direction:column;gap:2px}.live-date-trigger small{font-size:8px;letter-spacing:1px;color:#9aa6b1}.live-date-trigger strong{font-size:12px;font-weight:600;color:#425466}.live-date-trigger b{font-size:14px;color:#8b98a5}.live-date-calendar{display:grid;place-items:center;width:29px;height:29px;border-radius:7px;background:#fff1e8;color:#e26f35;font-size:17px}.live-date-popover{position:absolute;top:58px;right:0;display:grid;grid-template-columns:180px minmax(430px,1fr);width:min(760px,calc(100vw - 290px));min-height:390px;overflow:hidden;border:1px solid #e0e5ea;border-radius:12px;background:#fff;box-shadow:0 18px 55px #24394f24}.live-date-presets{padding:16px 12px;border-right:1px solid #e8ecf0;overflow:auto;max-height:470px}.live-date-presets button{display:block;width:100%;padding:8px 12px;border-radius:6px;color:#617184;font-size:12px;font-weight:550;text-align:left}.live-date-presets button:hover{background:#fff6f0;color:#d96831}.live-date-presets button.active{background:#f47735;color:#fff}.live-date-main{display:flex;flex-direction:column;padding:23px 26px 18px}.live-date-tabs{display:flex;justify-content:center;margin-bottom:24px}.live-date-tabs span{padding:9px 20px;border-radius:8px;background:#f47735;color:#fff;font-size:12px;font-weight:650}.live-date-summary{text-align:center;color:#4f6072;font-size:15px;font-weight:650;margin-bottom:28px}.live-date-fields{display:grid;grid-template-columns:1fr auto 1fr;align-items:end;gap:15px;padding:24px;border:1px solid #e7ebef;border-radius:10px;background:#fafbfc}.live-date-fields label{display:flex;flex-direction:column;gap:8px;color:#718091;font-size:10px;font-weight:600;letter-spacing:.4px;text-transform:uppercase}.live-date-fields input{width:100%;height:42px;padding:0 11px;border:1px solid #dbe2e8;border-radius:7px;background:#fff;color:#35485c;font-family:inherit;font-size:12px;font-weight:600;color-scheme:light}.live-date-fields>span{padding-bottom:12px;color:#a0abb5}.live-date-help{margin:14px 2px;color:#96a1ac;font-size:10px}.live-date-main footer{display:flex;justify-content:flex-end;gap:10px;margin-top:auto;padding-top:20px;border-top:1px solid #edf0f3}.live-date-main footer .btn{min-width:92px}.production-missing-source{display:flex;align-items:center;gap:12px;margin:0 0 18px;padding:14px 16px;border:1px solid #e2e7eb;border-radius:8px;background:#fff}.production-missing-source strong{color:#536577}.production-missing-source span{color:#8a96a1;font-size:10px}@media(max-width:850px){.live-date-popover{position:fixed;top:90px;left:18px;right:18px;width:auto;grid-template-columns:145px 1fr}.live-date-trigger{min-width:220px}}@media(max-width:620px){.live-date-popover{grid-template-columns:1fr;max-height:75vh;overflow:auto}.live-date-presets{display:flex;gap:6px;overflow:auto;border-right:0;border-bottom:1px solid #e8ecf0}.live-date-presets button{width:auto;white-space:nowrap}.live-date-main{padding:18px}.live-date-fields{grid-template-columns:1fr}.live-date-fields>span{display:none}}';
     document.head.appendChild(style);
   }
 
