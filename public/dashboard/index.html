@@ -7037,12 +7037,21 @@ if (location.protocol !== 'file:') document.documentElement.classList.add('produ
   }
 
   function controls(ctx,r){const u=ctx.ui,s=r.settings,global=r.windows.period==='global';return '<div class="afg-intro"><div><h2>Who earns the next traffic budget?</h2><p>Compare partner P&L, recent momentum and the countries behind the result.</p></div><div class="afg-window" role="group" aria-label="Affiliate comparison period">'+(global?'<span class="active">Global reporting period</span>':[['7d','Last 7 days'],['mtd','Month to date']].map(([key,label])=>'<button class="'+(r.windows.period===key?'active':'')+'" data-action="affgrowth-period" data-value="'+key+'" aria-pressed="'+(r.windows.period===key)+'">'+label+'</button>').join(''))+'</div></div><div class="afg-scope"><div class="afg-type-tabs" role="group" aria-label="Affiliate traffic type">'+[['all','All affiliates'],['fast-track','Fast Track'],['traditional','Prop firm affiliates']].map(([key,label])=>'<button class="'+(s.trafficType===key?'active':'')+'" data-action="affgrowth-type" data-value="'+key+'" aria-pressed="'+(s.trafficType===key)+'">'+label+'</button>').join('')+'</div><span>'+u.escape(r.windows.currentLabel)+' '+(r.windows.comparable?'vs '+u.escape(r.windows.priorLabel):'· comparison unavailable')+' · USD</span></div>'+(r.windows.comparable?'':'<div class="afg-history-note">'+u.icon('info',15)+'<span>'+u.escape(r.windows.reason)+' History begins '+u.escape(short(r.windows.first))+'.'+(r.windows.latestAffiliate?' Latest live affiliate order: '+u.escape(short(r.windows.latestAffiliate))+'.':'')+'</span></div>');}
-  function kpis(ctx,r){const u=ctx.ui;return '<div class="afg-kpis">'+[
-    ['Affiliate P&L',amount(u,r.totals.profit),'After direct costs · before overheads & tax','all','dollar'],
-    ['Growing partners',r.windows.comparable?u.number(r.summary.growing):'—',r.windows.comparable?'At least 10% higher net sales · meaningful sample':'Comparison history unavailable','growing','up'],
-    ['Partners dropping off',r.windows.comparable?u.number(r.summary.declining):'—',r.windows.comparable?'Net sales down at least 10%':'Comparison history unavailable','decline','activity'],
-    ['Scale candidates',u.number(r.summary.scale),'Commercial screen · discuss a controlled test','scale','target']
-  ].map(([label,value,note,signal,ic])=>'<button class="kpi-card afg-kpi '+(r.settings.signal===signal&&signal!=='all'?'selected':'')+'" data-action="affgrowth-signal" data-value="'+signal+'"><span class="kpi-top"><span class="kpi-label">'+label+'</span>'+u.icon(ic,17)+'</span><strong class="kpi-value">'+value+'</strong><span class="kpi-note">'+note+'</span></button>').join('')+'</div>';}
+  function kpis(ctx,r){
+    const u=ctx.ui,comparisonReady=r.windows.comparable&&r.totals.profit!==null;
+    const cards=comparisonReady?[
+      ['Affiliate P&L',amount(u,r.totals.profit),'After direct costs · before overheads & tax','all','dollar'],
+      ['Growing partners',u.number(r.summary.growing),'At least 10% higher net sales · meaningful live volume','growing','up'],
+      ['Partners dropping off',u.number(r.summary.declining),'Net sales down at least 10%','decline','activity'],
+      ['Scale candidates',u.number(r.summary.scale),'Commercial screen · discuss a controlled test','scale','target']
+    ]:[
+      ['Affiliate net sales',u.money(r.totals.netSales),'Live attributed order revenue','all','dollar'],
+      ['Active partners',u.number(r.growth.currentActive),'Distinct partners with attributed sales','all','users'],
+      ['Affiliate orders',u.number(r.totals.orders),'Attributed eligible orders in this period','all','file'],
+      ['Customer countries',u.number(r.geos.length),'Countries represented in affiliate sales','all','globe']
+    ];
+    return '<div class="afg-kpis">'+cards.map(([label,value,note,signal,ic])=>'<button class="kpi-card afg-kpi '+(r.settings.signal===signal&&signal!=='all'?'selected':'')+'" data-action="affgrowth-signal" data-value="'+signal+'"><span class="kpi-top"><span class="kpi-label">'+label+'</span>'+u.icon(ic,17)+'</span><strong class="kpi-value">'+value+'</strong><span class="kpi-note">'+note+'</span></button>').join('')+'</div>';
+  }
   function commissionSummary(ctx,r){
     const u=ctx.ui,c=r.totals,p=r.previous,change=r.summary.commissionChange,changePct=change!==null&&p.commissions>0?change/p.commissions*100:null;
     return '<section class="panel afg-commission-summary" aria-label="Commission earned"><div class="afg-commission-primary"><span>Commission earned</span><strong>'+amount(u,c.commissions)+'</strong><small>Recorded on affiliate orders · '+u.escape(r.windows.currentLabel)+'</small></div><div class="afg-commission-comparison"><span>Previous period <strong>'+(p?amount(u,p.commissions):'Unavailable')+'</strong></span><span>Change <strong>'+(change===null?'Unavailable':signed(u,change)+(changePct===null?'':' · '+(changePct>0?'+':'')+percent(changePct)))+'</strong></span><small>'+(p?u.escape(r.windows.priorLabel):'Earlier comparison history unavailable')+'</small></div><div class="afg-commission-source"><p>Commission from the purchase ledger. Retainers are separate; this does not show whether a partner has been paid.</p><small>'+u.number(c.commissionRecordedOrders)+' / '+u.number(c.orders)+' orders with recorded commission'+(c.commissionMissingOrders?' · '+u.number(c.commissionMissingOrders)+' missing or invalid':'')+'</small><button class="text-link" data-action="affgrowth-commissions">View by affiliate '+u.icon('arrow',13)+'</button></div></section>';
