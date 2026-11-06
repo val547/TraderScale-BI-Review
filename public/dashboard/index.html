@@ -1098,6 +1098,7 @@ body.overlay-open{overflow:hidden}.drawer-header p{font-size:11px;color:#8f9caa;
 .reports-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:17px}
 .reports-card{display:flex;flex-direction:column;align-items:flex-start;text-align:left;min-width:0;border:1px solid #e2e6ec;border-radius:12px;padding:22px 23px 0;background:#fff;box-shadow:0 2px 5px #20344a02;transition:border-color .16s,box-shadow .16s,transform .16s}
 .reports-card:hover{border-color:#e2b79c;box-shadow:0 5px 18px #384a6210;transform:translateY(-1px)}
+.reports-card:disabled{cursor:default;opacity:.72;background:#fafbfc}.reports-card:disabled:hover{border-color:#e2e6ec;box-shadow:none;transform:none}.reports-card:disabled .reports-card-footer{color:#8e9baa}
 .reports-card:focus-visible,.reports-categories button:focus-visible,.reports-results-line button:focus-visible{outline:3px solid #edc1a3;outline-offset:3px}
 .reports-card-top{display:flex;align-items:center;justify-content:space-between;gap:15px;width:100%;margin-bottom:16px}
 .reports-card-icon{display:inline-flex;align-items:center;justify-content:center;width:42px;height:42px;border-radius:10px;flex-shrink:0}
@@ -9374,8 +9375,20 @@ if (location.protocol !== 'file:') document.documentElement.classList.add('produ
   ];
 
   function catalogue(ctx) {
-    const workspacePages = new Set(ctx.workspacePages || []);
-    return reports.filter(report => !workspacePages.has(report.page));
+    return reports.slice();
+  }
+
+  function coverage(report,ctx) {
+    const quality=ctx.data.productionQuality||{};
+    const live={
+      profitability:!!quality.profitabilityReady,
+      affiliates:!!quality.affiliatesReady,
+      'payout-history':Array.isArray(ctx.data.payouts),
+      ltv:!!quality.revenueReady&&!!quality.customersReady
+    };
+    if(live[report.id])return {state:'live',label:'LIVE',tone:'success'};
+    if(['client-profit','journey','rebuy','payout-patterns'].includes(report.id))return {state:'partial',label:'PARTIAL',tone:'warning'};
+    return {state:'missing',label:'NO LIVE DATA',tone:'neutral'};
   }
 
   function selection(ctx) {
@@ -9388,20 +9401,32 @@ if (location.protocol !== 'file:') document.documentElement.classList.add('produ
     return { category, query, rows, available };
   }
 
-  function card(report, ui) {
+  function card(report, ui, ctx) {
     const category = categories.find(item => item.id === report.category);
-    return '<button class="reports-card" data-action="reports-open" data-id="' + ui.escape(report.id) + '" aria-label="Open ' + ui.escape(report.title) + '">' +
-      '<span class="reports-card-top"><span class="reports-card-icon reports-tone-' + report.category + '">' + ui.icon(report.icon, 22) + '</span><span class="reports-card-category">' + ui.escape(category.label) + '</span></span>' +
+    const source=coverage(report,ctx),enabled=source.state==='live';
+    return '<button class="reports-card"'+(enabled?' data-action="reports-open" data-id="' + ui.escape(report.id) + '"':' disabled')+' aria-label="' + (enabled?'Open ':'No live data for ') + ui.escape(report.title) + '">' +
+      '<span class="reports-card-top"><span class="reports-card-icon reports-tone-' + report.category + '">' + ui.icon(report.icon, 22) + '</span><span class="reports-card-category">' + ui.escape(category.label) + '</span><span class="badge badge-'+source.tone+'">'+source.label+'</span></span>' +
       '<span class="reports-card-title">' + ui.escape(report.title) + '</span>' +
       '<span class="reports-card-description">' + ui.escape(report.description) + '</span>' +
       '<span class="reports-card-topics">' + report.topics.map(topic => '<span>' + ui.escape(topic) + '</span>').join('') + '</span>' +
-      '<span class="reports-card-footer"><span>Open report</span>' + ui.icon('arrow', 17) + '</span></button>';
+      '<span class="reports-card-footer"><span>'+(enabled?'Open report':source.state==='partial'?'Partial source · opening disabled':'Awaiting live source')+'</span>' + (enabled?ui.icon('arrow', 17):'') + '</span></button>';
   }
 
   function render(ctx) {
     const ui = ctx.ui, state = selection(ctx);
     const hasSelection = !!state.query || state.category !== 'all';
+    const metrics=ctx.data.getMetrics(ctx.filters),connector=window.BIProductionConnector;
+    const match=row=>(!ctx.filters.programme||ctx.filters.programme==='all'||row.programme===ctx.filters.programme)&&(!ctx.filters.size||ctx.filters.size==='all'||Number(row.accountSize)===Number(ctx.filters.size))&&(!ctx.filters.country||ctx.filters.country==='all'||row.country===ctx.filters.country)&&(!ctx.filters.channel||ctx.filters.channel==='all'||row.channel===ctx.filters.channel);
+    const payouts=(ctx.data.payouts||[]).filter(row=>match(row)&&['Approved','Paid'].includes(row.status)&&(!connector||!connector.inDateRange||connector.inDateRange(row.approvedAt||row.paidAt||row.requestedAt)));
+    const accounts=ctx.data.filterAccounts?ctx.data.filterAccounts(ctx.filters):[];
+    const liveCount=state.available.filter(report=>coverage(report,ctx).state==='live').length,partialCount=state.available.filter(report=>coverage(report,ctx).state==='partial').length;
     return '<section class="reports-catalogue" aria-label="Specialist report catalogue">' +
+      '<div class="page-kpis">'+
+      ui.metric({label:'Net sales',value:ui.money(metrics.netSales),note:'Selected reporting period'})+
+      ui.metric({label:'Live accounts',value:ui.number(accounts.length),note:'Matching product and account filters'})+
+      ui.metric({label:'Approved payouts',value:ui.money(payouts.reduce((n,row)=>n+(Number(row.amount)||0),0)),note:ui.number(payouts.length)+' approved records'})+
+      ui.metric({label:'Report coverage',value:ui.number(liveCount)+' live',note:ui.number(partialCount)+' partial · '+ui.number(state.available.length-liveCount-partialCount)+' unavailable'})+
+      '</div>'+
       '<div class="reports-toolbar"><div class="reports-search">' + ui.icon('search', 18) +
       '<input type="search" data-reports-control="search" aria-label="Search specialist reports" placeholder="Find a report, metric or topic" value="' + ui.escape(ctx.local.reportsSearch || '') + '" autocomplete="off">' +
       '</div><span class="reports-total">' + state.available.length + ' specialist reports</span></div>' +
@@ -9411,7 +9436,7 @@ if (location.protocol !== 'file:') document.documentElement.classList.add('produ
       }).join('') + '</div>' +
       '<div class="reports-results-line"><span aria-live="polite">' + (hasSelection ? state.rows.length + ' matching report' + (state.rows.length === 1 ? '' : 's') : 'Choose a report to explore the detail') + '</span>' +
       (hasSelection ? '<button data-action="reports-clear">Clear search & filters ' + ui.icon('x', 13) + '</button>' : '') + '</div>' +
-      (state.rows.length ? '<div class="reports-grid">' + state.rows.map(report => card(report, ui)).join('') + '</div>' :
+      (state.rows.length ? '<div class="reports-grid">' + state.rows.map(report => card(report, ui, ctx)).join('') + '</div>' :
         '<div class="reports-empty">' + ui.icon('search', 28) + '<h2>No reports found</h2><p>Try a different topic or view the full report catalogue.</p><button class="btn btn-secondary btn-small" data-action="reports-clear">Show all reports</button></div>') +
       '</section>';
   }
@@ -9535,7 +9560,7 @@ document.querySelector('.demo-badge').textContent='OFFLINE DEMO';
 const noFilters=['health','settings','reports','pricing','competitors','client-profit'].includes(page);if(['overview','ltv'].includes(page))filters.channel='all';
 const payoutSnapshotView=['risk-radar','payout-exposure','payout-consistency'].includes(page);const profitableRiskView=page==='profitable-risk';const retentionView=page==='journey'&&local.journeyView!=='portfolios';const accountAnalyticsView=page==='accounts'&&local.accountsTab!=='results';const monthlyRevenue=page==='revenue'&&['month','cohort'].includes(local.econView);
 document.getElementById('filters-row').hidden=noFilters;document.querySelector('.heading-actions').hidden=noFilters&&!['pricing','competitors'].includes(page);document.querySelector('.date-control').hidden=page==='ltv'||monthlyRevenue||page==='pipeline'||page==='pricing'||page==='competitors';
-document.getElementById('filters-row').innerHTML=filterControl('programme','programmes',D.programmes)+((retentionView||profitableRiskView||payoutSnapshotView||['accounts','revenue','affiliates','pipeline','payouts','rebuy','updates'].includes(page))?'<div class="filter-control"><label class="sr-only" for="filter-size">Account size</label><select id="filter-size" data-filter="size">'+option('all','All account sizes',filters.size)+D.accountSizes.map(n=>option(String(n),money(n),String(filters.size))).join('')+'</select></div>':'')+filterControl('country','countries',D.countries)+(['overview','ltv'].includes(page)?'':filterControl('channel','channels',D.channels))+'<span class="currency-label">USD</span><div class="filter-tail">'+(Object.values(filters).some((v,i)=>i>0&&v!=='all')?'<button class="reset-filters" data-action="reset-filters">'+icon('x',13)+' Reset</button>':'')+'<span class="period-context">'+(monthlyRevenue?'First purchase filters · value through 25 Oct 2026':page==='ltv'?'Acquisition cohort · choose dates below':profitableRiskView?'Current trader portfolios · 25 Oct 2026':retentionView?'Current customer portfolios · 25 Oct 2026':page==='pipeline'?'Payouts & outcomes · choose dates below':payoutSnapshotView?'Current portfolio · 25 Oct 2026':page==='updates'?'Windows relative to the selected update':accountAnalyticsView?'Current active accounts · 25 Oct 2026':page==='accounts'?'Opened '+dateLabel():page==='rebuy'?'Breach cohort · '+dateLabel():dateLabel()+' · Dubai time')+'</span></div>';
+document.getElementById('filters-row').innerHTML=filterControl('programme','programmes',D.programmes)+((retentionView||profitableRiskView||payoutSnapshotView||['accounts','revenue','affiliates','pipeline','payouts','rebuy','updates','reports'].includes(page))?'<div class="filter-control"><label class="sr-only" for="filter-size">Account size</label><select id="filter-size" data-filter="size">'+option('all','All account sizes',filters.size)+D.accountSizes.map(n=>option(String(n),money(n),String(filters.size))).join('')+'</select></div>':'')+filterControl('country','countries',D.countries)+(['overview','ltv'].includes(page)?'':filterControl('channel','channels',D.channels))+'<span class="currency-label">USD</span><div class="filter-tail">'+(Object.values(filters).some((v,i)=>i>0&&v!=='all')?'<button class="reset-filters" data-action="reset-filters">'+icon('x',13)+' Reset</button>':'')+'<span class="period-context">'+(monthlyRevenue?'First purchase filters · value through 25 Oct 2026':page==='ltv'?'Acquisition cohort · choose dates below':profitableRiskView?'Current trader portfolios · 25 Oct 2026':retentionView?'Current customer portfolios · 25 Oct 2026':page==='pipeline'?'Payouts & outcomes · choose dates below':payoutSnapshotView?'Current portfolio · 25 Oct 2026':page==='updates'?'Windows relative to the selected update':accountAnalyticsView?'Current active accounts · 25 Oct 2026':page==='accounts'?'Opened '+dateLabel():page==='rebuy'?'Breach cohort · '+dateLabel():dateLabel()+' · Dubai time')+'</span></div>';
 const periodSelect=document.getElementById('date-period'),snapshotPeriod=payoutSnapshotView||accountAnalyticsView||retentionView||profitableRiskView;if(periodSelect){periodSelect.innerHTML=snapshotPeriod?option('snapshot','Snapshot · 25 Oct 2026','snapshot'):page==='updates'?option('update','By update date','update'):option('mtd','1–25 Oct 2026',filters.period)+option('7d','Last 7 days',filters.period)+option('lastmonth','1–25 Sep 2026',filters.period)+option('90d','All demo history',filters.period);periodSelect.value=snapshotPeriod?'snapshot':page==='updates'?'update':filters.period;periodSelect.disabled=snapshotPeriod||page==='updates';}
 const ctx={data:D,filters,metrics:D.getMetrics(filters),ui:window.BIUI,local,page,workspacePages:navItems.map(item=>item[0])};
 const fn={'client-profit':window.BIClientProfit.render,competitors:ctx=>window.BICompetitorMonitor.render(ctx),pricing:ctx=>window.BIPricing.render(ctx),'profitable-risk':window.BIProfitableRisk.render,journey:journeyWorkspace,ltv:window.BIOwnerValue.renderReport,reports:window.BIReports.render,overview:ownerOverview,revenue:window.BIEconomics.renderProfitability,affiliates:affiliateWorkspace,pipeline:ctx=>window.BIPayoutHistory.render(ctx),'risk-radar':window.BIRiskRules.render,'payout-exposure':window.BIPayoutPatterns.render,'payout-consistency':window.BIPayoutConsistency.render,rebuy:window.BIRebuy.render,accounts:accountWorkspace,updates:window.BIUpdates.render,health:health,settings:settings}[page]||window.BIPages[page];

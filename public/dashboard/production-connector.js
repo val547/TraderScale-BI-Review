@@ -699,7 +699,7 @@
     var page = currentPage();
     var dateControl = document.querySelector('.date-control');
     if (!dateControl || state.mode !== 'production') return;
-    var datedPages = new Set(['overview', 'revenue', 'accounts', 'pipeline', 'affiliates', 'competitors', 'pricing', 'rebuy', 'updates', 'ltv', 'client-profit', 'journey', 'profitable-risk', 'risk-radar', 'payout-exposure', 'payout-consistency']);
+    var datedPages = new Set(['overview', 'revenue', 'accounts', 'pipeline', 'affiliates', 'competitors', 'pricing', 'rebuy', 'updates', 'ltv', 'client-profit', 'journey', 'profitable-risk', 'risk-radar', 'payout-exposure', 'payout-consistency', 'reports']);
     if (!datedPages.has(page)) return;
     dateControl.hidden = false;
     var key = state.dateAllTime + ':' + state.dateStart + ':' + state.dateEnd + ':' + state.datePickerOpen;
