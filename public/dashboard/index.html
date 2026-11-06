@@ -8318,7 +8318,7 @@ body.overlay-open{overflow:hidden}.drawer-header p{font-size:11px;color:#8f9caa;
       const days = Math.max(1, Math.round((stamp(current[1]) - stamp(current[0])) / DAY) + 1);
       const prior = [addDays(current[0], -days), addDays(current[0], -1)];
       const comparable = Boolean(first && prior[0] >= first && prior[1] <= availableEnd);
-      return { period:'live', current, prior, comparable, currentLabel:rangeLabel(current), priorLabel:rangeLabel(prior), first, availableEnd,
+      return { period:'live', current, prior:comparable?prior:null, comparable, currentLabel:rangeLabel(current), priorLabel:comparable?rangeLabel(prior):'Unavailable', first, availableEnd,
         reason:comparable?'Equal-length immediately preceding period; identical filters on both periods.':'A complete equal-length preceding period is unavailable. Missing history is not treated as zero.' };
     }
     const period = ['mtd', '7d', 'lastmonth', '90d'].includes((ctx.filters || {}).period) ? ctx.filters.period : 'mtd';
@@ -8541,6 +8541,13 @@ body.overlay-open{overflow:hidden}.drawer-header p{font-size:11px;color:#8f9caa;
   function windowsFor(source,data) {
     const asOf=validDay(source.asOf)||validDay(data.asOf),historyStart=validDay(source.historyStart);
     if(!asOf)return {available:false,current:[],prior:[],comparable:false,reason:'The demo observation date is unavailable.'};
+    const production=window.BIProductionConnector&&window.BIProductionConnector.state&&window.BIProductionConnector.state.mode==='production'?window.BIProductionConnector.state:null;
+    if(production){
+      const current=production.dateAllTime?[historyStart||asOf,asOf]:[production.dateStart,production.dateEnd],days=Math.max(1,Math.round((Date.parse(current[1])-Date.parse(current[0]))/DAY)+1);
+      const prior=[plus(current[0],-days),plus(current[0],-1)],comparable=!!historyStart&&prior[0]>=historyStart;
+      return {available:true,asOf,historyStart,current,prior,days,sameDays:true,comparable,currentComplete:!!historyStart&&historyStart<=current[0],
+        reason:comparable?'':'A complete equal-length preceding period is unavailable.',currentLabel:rangeText(current),priorLabel:comparable?rangeText(prior):'Unavailable'};
+    }
     const current=[asOf.slice(0,7)+'-01',asOf],day=Number(asOf.slice(8)),first=Date.parse(current[0]+'T12:00:00Z'),previousEnd=iso(first-DAY),previousDays=Number(previousEnd.slice(8));
     const prior=[previousEnd.slice(0,7)+'-01',previousEnd.slice(0,7)+'-'+String(Math.min(day,previousDays)).padStart(2,'0')];
     const sameDays=day<=previousDays,historyAvailable=!!historyStart&&historyStart<=prior[0];
@@ -8647,9 +8654,9 @@ body.overlay-open{overflow:hidden}.drawer-header p{font-size:11px;color:#8f9caa;
   }
   function render(ctx) {
     const r=getReport(ctx),u=ctx.ui;
-    if(!r.windows.available)return '<section class="panel owner-payouts-panel"><div class="panel-header"><h2 class="panel-title">Payouts this month</h2></div><p class="owner-payouts-unavailable">The observation date is unavailable.</p></section>';
+    if(!r.windows.available)return '<section class="panel owner-payouts-panel"><div class="panel-header"><h2 class="panel-title">Payout decisions</h2></div><p class="owner-payouts-unavailable">The observation date is unavailable.</p></section>';
     const metricRow=metric=>'<button class="owner-payouts-row" data-action="owner-payouts-detail" data-status="'+metric.kind+'"><span class="owner-payouts-row-top"><strong>'+metric.label+'</strong><b>'+ (metric.current.available?u.money(metric.current.amount):'Unavailable')+'</b></span><span class="owner-payouts-count">'+(metric.current.available?u.number(metric.current.count)+(metric.sampleOnly?' sample decisions':' decisions')+(metric.prior.available?' · '+u.number(metric.prior.count)+' last month':''):'Incomplete decision coverage')+'</span><span class="owner-payouts-row-bottom"><span><strong class="owner-payouts-change">'+u.escape(changeText(metric,u))+'</strong><small>'+(metric.sampleOnly?'Sample-log change':'Amount change')+' · vs last month</small></span>'+miniChart(metric,u)+'</span></button>';
-    return '<section class="panel owner-payouts-panel"><div class="panel-header"><div><h2 class="panel-title">Payouts this month</h2><p class="panel-subtitle">'+u.escape(r.windows.currentLabel)+' · approval / rejection dates</p></div><button class="info-button" data-action="owner-payouts-method" aria-label="How monthly payout decisions are measured">'+u.icon('info',15)+'</button></div><div class="owner-payouts-metrics">'+metricRow(r.approved)+metricRow(r.rejected)+'</div><div class="owner-payouts-comparison"><span>Compared with '+u.escape(r.windows.priorLabel)+'</span><span><i class="current"></i>This month <i class="prior"></i>Last month</span></div><div class="panel-footer owner-payouts-footer"><span>Demo decision history</span><button class="text-link" data-page="pipeline">Open Payouts '+u.icon('arrow',14)+'</button></div></section>';
+    return '<section class="panel owner-payouts-panel"><div class="panel-header"><div><h2 class="panel-title">Payout decisions</h2><p class="panel-subtitle">'+u.escape(r.windows.currentLabel)+' · approval / rejection dates</p></div><button class="info-button" data-action="owner-payouts-method" aria-label="How payout decisions are measured">'+u.icon('info',15)+'</button></div><div class="owner-payouts-metrics">'+metricRow(r.approved)+metricRow(r.rejected)+'</div><div class="owner-payouts-comparison"><span>Compared with '+u.escape(r.windows.priorLabel)+'</span><span><i class="current"></i>Selected period <i class="prior"></i>Previous period</span></div><div class="panel-footer owner-payouts-footer"><span>Live decision history</span><button class="text-link" data-page="pipeline">Open Payouts '+u.icon('arrow',14)+'</button></div></section>';
   }
   function detail(kind,ctx) {
     const r=getReport(ctx),u=ctx.ui,key=kind==='rejected'?'rejected':'approved',metric=r[key],local=ctx.local||{},period=local.ownerPayoutsDetailPeriod==='prior'?'prior':'current',values=metric[period],range=period==='prior'?r.windows.prior:r.windows.current;

@@ -220,7 +220,7 @@
     function sourceFor(data) {
       var orders = (Array.isArray(data.orders) ? data.orders : []).filter(function (row) { return inDateRange(row.date); });
       var dates = orders.map(function (row) { return isoDate(row.date); }).filter(Boolean).sort();
-      var payouts = (Array.isArray(data.payouts) ? data.payouts : []).filter(function (row) { return inDateRange(row.requestedAt); });
+      var payouts = Array.isArray(data.payouts) ? data.payouts : [];
       return {
         orders: orders,
         customers: Array.isArray(data.customers) ? data.customers : [],
@@ -721,6 +721,27 @@
       var value = node.nodeValue;
       replacements.forEach(function (item) { value = value.replace(item[0], item[1]); });
       if (value !== node.nodeValue) node.nodeValue = value;
+    }
+    if (!window.BIThoughtMetricData) {
+      var channelBadge = root.querySelector('.channels-source-badge');
+      var channelTotal = root.querySelector('.channels-chart-meta strong');
+      var channelEmptyTitle = root.querySelector('.channels-empty h3');
+      var channelEmptyCopy = root.querySelector('.channels-empty p');
+      var channelFooter = root.querySelector('.channels-footer .text-link');
+      if (channelBadge) channelBadge.textContent = 'No live data';
+      if (channelTotal) channelTotal.textContent = 'Unavailable';
+      if (channelEmptyTitle) channelEmptyTitle.textContent = 'No live data';
+      if (channelEmptyCopy) channelEmptyCopy.textContent = 'Connect the ThoughtMetric production source to populate this block.';
+      if (channelFooter) channelFooter.textContent = 'Live source not connected';
+    }
+    var profitCard = root.querySelector('.ov-value-card[data-id="profit"]');
+    if (profitCard) {
+      var profitValue = profitCard.querySelector('strong');
+      var profitChange = profitCard.querySelector('.ov-metric-change');
+      var profitBaseline = profitCard.querySelector('.ov-metric-baseline');
+      if (profitValue) profitValue.textContent = 'Unavailable';
+      if (profitChange) profitChange.textContent = 'Cost data not connected';
+      if (profitBaseline) profitBaseline.textContent = '';
     }
   }
 
