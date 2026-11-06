@@ -150,9 +150,9 @@ function date(value: unknown) {
 
 function programmeFamily(row: Record<string, unknown>) {
   const source = `${text(row.plan)} ${text(row.plan_category_name)}`.toLowerCase();
+  if (source.includes("instant")) return "Instant";
   if (/\b(?:one|1)[ -]?step\b/.test(source) || source.includes("speedy")) return "Speedy";
   if (/\b(?:two|2)[ -]?step\b/.test(source) || source.includes("pro")) return "Pro";
-  if (source.includes("instant")) return "Instant";
   if (source.includes("competition")) return "Classic";
   return text(row.plan_category_name, text(row.plan, "Other"));
 }

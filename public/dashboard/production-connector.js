@@ -636,7 +636,7 @@
     return '<section class="no-live-data"><span class="no-live-icon">—</span><p class="no-live-kicker">LIVE SOURCE NOT CONNECTED</p>'
       + '<h2>No live data</h2><p>' + escapeHtml(labels[page] || 'This report')
       + ' is hidden until its production dataset is connected and validated.</p>'
-      + '<small>No demo, sample, generated, estimated or fallback values are displayed.</small></section>';
+      + '<small>Only validated live warehouse records are shown.</small></section>';
   }
 
   function healthPage() {
