@@ -77,7 +77,7 @@ async function query(credential: ServiceAccount, token: string, sql: string) {
         location: "europe-west3",
         timeoutMs: 25000,
         maxResults: 10000,
-        maximumBytesBilled: "2000000000",
+        maximumBytesBilled: "3000000000",
       }),
     },
   );
@@ -289,7 +289,7 @@ ORDER BY order_reporting_date DESC, order_id
 `;
 
 const PROFITABILITY_SQL = `
-SELECT COALESCE(plan, 'Unknown') AS plan, COALESCE(plan_size, 0) AS plan_size,
+SELECT COALESCE(plan, 'Unknown') AS plan, COALESCE(SAFE_CAST(plan_size AS NUMERIC), 0) AS plan_size,
   COUNT(*) AS attempts, COUNTIF(reached_funded) AS funded_attempts,
   SUM(COALESCE(revenue, 0)) AS revenue,
   SUM(COALESCE(discount, 0)) AS discount,
