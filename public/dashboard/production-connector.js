@@ -702,6 +702,14 @@
     var page = currentPage();
     var dateControl = document.querySelector('.date-control');
     if (!dateControl || state.mode !== 'production') return;
+    var unavailablePages = new Set([
+      'competitors', 'pricing', 'updates', 'client-profit', 'journey', 'rebuy',
+      'profitable-risk', 'risk-radar', 'payout-exposure', 'payout-consistency'
+    ]);
+    if (unavailablePages.has(page)) {
+      var unavailableContent = document.getElementById('page-content');
+      if (unavailableContent && !unavailableContent.querySelector('.no-live-data')) unavailableContent.innerHTML = noLiveDataPage(page);
+    }
     var datedPages = new Set(['overview', 'revenue', 'accounts', 'pipeline', 'affiliates', 'competitors', 'pricing', 'rebuy', 'updates', 'ltv', 'client-profit', 'journey', 'profitable-risk', 'risk-radar', 'payout-exposure', 'payout-consistency', 'reports']);
     if (!datedPages.has(page)) return;
     dateControl.hidden = false;

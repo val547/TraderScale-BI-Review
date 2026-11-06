@@ -129,6 +129,12 @@ function number(value: unknown) {
   return Number.isFinite(result) ? result : 0;
 }
 
+function optionalNumber(value: unknown) {
+  if (value == null || String(value).trim() === "") return null;
+  const result = Number(value);
+  return Number.isFinite(result) ? result : null;
+}
+
 function text(value: unknown, fallback = "") {
   return value == null ? fallback : String(value);
 }
@@ -187,9 +193,27 @@ function productPlan(row: Record<string, unknown>, accountSize?: unknown) {
 function accountStage(row: Record<string, unknown>) {
   const source = `${text(row.status)} ${text(row.plan)} ${text(row.plan_category_name)}`.toLowerCase();
   if (row.breached_at || source.includes("breach")) return "Breached";
-  if (source.includes("funded") || source.includes("live")) return "Funded";
+  if (source.includes("funded") || source.includes("funding") || source.includes("live") || source.includes("instant")) return "Funded";
   if (source.includes("pass")) return "Passed";
   return "Evaluation";
+}
+
+function challengeFormat(row: Record<string, unknown>) {
+  const family = programmeFamily(row);
+  if (family === "Instant") return "instant";
+  if (family === "Speedy") return "1-step";
+  if (family === "Pro" || family === "Classic") return "2-step";
+  return "";
+}
+
+function challengePhase(row: Record<string, unknown>, stage: string) {
+  if (stage === "Funded") return "funded";
+  if (stage === "Passed") return "complete";
+  const source = `${text(row.plan)} ${text(row.plan_category_name)}`.toLowerCase();
+  if (/\b(?:phase|step)\s*2\b/.test(source)) return 2;
+  if (/\b(?:phase|step)\s*1\b/.test(source)) return 1;
+  if (challengeFormat(row) === "1-step" && stage === "Evaluation") return 1;
+  return null;
 }
 
 function accountStatus(row: Record<string, unknown>) {
@@ -211,14 +235,18 @@ const ACCOUNTS_SQL = `
 WITH latest_accounts AS (
   SELECT account_id, account_nr, customer_id, status, platform, plan,
     plan_category_name, current_equity, current_balance, profit,
-    breached_at, created_at, updated_at
+    breached_at, created_at, updated_at,
+    COALESCE(etl_updated_at, etl_loaded_at, updated_at, created_at) AS core_clock,
+    etl_loaded_at, etl_updated_at
   FROM \`trader-scale-486213.trader_scale.src_prop_accounts\`
   QUALIFY ROW_NUMBER() OVER (
     PARTITION BY account_id
-    ORDER BY etl_updated_at DESC, etl_loaded_at DESC, updated_at DESC, created_at DESC
+    ORDER BY COALESCE(etl_updated_at, etl_loaded_at, updated_at, created_at) DESC,
+      etl_loaded_at DESC, updated_at DESC
   ) = 1
 ), latest_details AS (
-  SELECT account_id, start_balance, currency, profit_share_percentage
+  SELECT account_id, status, current_balance, current_equity, breached_at,
+    start_balance, currency, profit_share_percentage, fetched_at
   FROM \`trader-scale-486213.trader_scale.src_prop_accounts_detail\`
   QUALIFY ROW_NUMBER() OVER (
     PARTITION BY account_id ORDER BY fetched_at DESC, updated_at DESC, created_at DESC
@@ -254,10 +282,15 @@ WITH latest_accounts AS (
 )
 SELECT a.account_id, CAST(a.account_nr AS STRING) AS account_login,
   a.customer_id, c.customer_nr, c.full_name AS customer_name, c.country,
-  a.status, a.platform, a.plan, a.plan_category_name, d.start_balance,
-  d.currency, d.profit_share_percentage, a.current_balance, a.current_equity,
+  IF(d.fetched_at > a.core_clock, COALESCE(d.status, a.status), a.status) AS status,
+  a.platform, a.plan, a.plan_category_name, d.start_balance,
+  d.currency, d.profit_share_percentage,
+  IF(d.fetched_at > a.core_clock, COALESCE(d.current_balance, a.current_balance), a.current_balance) AS current_balance,
+  IF(d.fetched_at > a.core_clock, COALESCE(d.current_equity, a.current_equity), a.current_equity) AS current_equity,
   a.profit, x.first_trade_date, x.total_trades, x.win_rate, x.net_profit,
-  a.breached_at, a.created_at, a.updated_at,
+  IF(d.fetched_at > a.core_clock, d.breached_at, a.breached_at) AS breached_at,
+  a.created_at, a.updated_at,
+  GREATEST(a.core_clock, COALESCE(d.fetched_at, TIMESTAMP '1970-01-01')) AS snapshot_at,
   COALESCE(p.approved_unpaid, 0) AS approved_unpaid,
   COALESCE(p.paid_total, 0) AS paid_total
 FROM latest_accounts AS a
@@ -448,37 +481,40 @@ export async function buildSnapshot(serviceAccountJson: string) {
 
   const accounts = accountRows.map((row) => {
     const trade = tradeByAccount.get(text(row.account_id));
-    const initialBalance = number(row.start_balance);
-    const balance = number(row.current_balance);
-    const equity = number(row.current_equity || row.current_balance);
-    const realizedPnl = number(row.net_profit || row.profit);
+    const initialBalance = optionalNumber(row.start_balance);
+    const balance = optionalNumber(row.current_balance);
+    const equity = optionalNumber(row.current_equity) ?? balance;
+    const realizedPnl = trade ? optionalNumber(trade.net_realized) : null;
     const stage = accountStage(row);
     const status = accountStatus(row);
-    const share = number(row.profit_share_percentage);
+    const share = optionalNumber(row.profit_share_percentage);
+    const planSize = productSize(row);
     return {
       id: text(row.account_id), login: text(row.account_login), orderId: "",
       customerId: text(row.customer_id),
       customerName: text(row.customer_name, text(row.customer_nr, "Unknown customer")),
       programme: productPlan(row, initialBalance), programmeFamily: programmeFamily(row),
-      plan: text(row.plan, text(row.plan_category_name)), platform: platform(row), accountSize: initialBalance,
+      plan: text(row.plan, text(row.plan_category_name)), planCategory: text(row.plan_category_name), platform: platform(row),
+      accountSize: planSize || initialBalance, accountSizeSource: planSize ? "plan-derived" : initialBalance ? "evidenced-start-balance" : "unknown",
       country: text(row.country, "Unknown"), channel: "Unknown",
       openedAt: date(row.created_at), stage, status,
-      initialBalance, balance, equity, realizedPnl, openPnl: equity - balance,
-      dailyStartEquity: equity, dailyDrawdownUsed: 0, dailyDrawdownLimit: 0,
-      maxDrawdownUsed: Math.max(0, initialBalance - equity), maxDrawdownLimit: 0,
-      dailyHeadroom: 0, maxHeadroom: 0, profitTarget: 0, profitTargetRemaining: 0,
-      rewardShare: share > 1 ? share / 100 : share,
-      payoutAccrued: 0, payoutApproved: number(row.approved_unpaid), payoutPaid: number(row.paid_total),
+      initialBalance, balance, equity, realizedPnl, openPnl: balance !== null && equity !== null ? equity - balance : null,
+      dailyStartEquity: equity, dailyDrawdownUsed: null, dailyDrawdownLimit: null,
+      maxDrawdownUsed: null, maxDrawdownLimit: null,
+      dailyHeadroom: null, maxHeadroom: null, profitTarget: null, profitTargetRemaining: null,
+      rewardShare: share === null ? null : share > 1 ? share / 100 : share,
+      payoutAccrued: null, payoutApproved: number(row.approved_unpaid), payoutPaid: number(row.paid_total),
       eligibleNow: false, riskLevel: stage === "Breached" ? "High" : "Normal",
       riskReason: stage === "Breached" ? "Account is marked breached in the warehouse." : "No live detector severity is joined to this account snapshot.",
-      tradeCount: trade ? number(trade.trade_count) : number(row.total_trades),
-      winRate: trade ? number(trade.win_rate) : number(row.win_rate),
+      tradeCount: trade ? optionalNumber(trade.trade_count) : null,
+      winRate: trade ? optionalNumber(trade.win_rate) : null,
       largestTrade: trade ? number(trade.largest_trade) : 0,
       assetFocus: trade ? text(trade.top_symbol, "—") : "—",
       tradeNetRealized: trade ? number(trade.net_realized) : null,
       firstClosedTradeAt: trade ? date(trade.first_closed_trade_at) : "",
       lastClosedTradeAt: trade ? date(trade.last_closed_trade_at) : "",
-      tradeHistoryAvailable: Boolean(trade), consistency: 0, profitDays: 0,
+      tradeHistoryAvailable: Boolean(trade), consistency: null, profitDays: null,
+      challengeFormat: challengeFormat(row), phase: challengePhase(row, stage), snapshotAt: date(row.snapshot_at),
       daysSinceOpen: Math.max(0, Math.floor((Date.now() - Date.parse(`${date(row.created_at)}T00:00:00Z`)) / 86400000)),
       demoRules: false,
     };

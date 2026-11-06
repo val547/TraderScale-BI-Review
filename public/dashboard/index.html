@@ -6708,7 +6708,10 @@ if (location.protocol !== 'file:') document.documentElement.classList.add('produ
       drawdown:accounts.filter(account => account.near).length,
       consistencyPassed:accounts.filter(account => account.inProfit && account.consistency.passed).length,
       consistencyExempt:accounts.filter(account => account.inProfit && account.consistency.exempt).length,
+      profitAssessed:accounts.filter(account => account.profit !== null).length,
+      consistencyAssessed:accounts.filter(account => account.inProfit && (account.consistency.assessed || account.consistency.exempt)).length,
       profitUnknown:accounts.filter(account => account.profit === null).length,
+      limitsAssessed:accounts.filter(account => account.limitsComplete).length,
       limitsUnknown:accounts.filter(account => account.limitsUnknown).length,
       limitsIncomplete:accounts.filter(account => !account.limitsComplete).length,
       limitCrossed:accounts.filter(account => account.limitCrossed).length,
@@ -6750,11 +6753,12 @@ if (location.protocol !== 'file:') document.documentElement.classList.add('produ
     const u = ctx.ui, c = r.counts;
     const notes = {
       live:u.number(c.evaluation) + ' evaluation · ' + u.number(c.passed) + ' passed · ' + u.number(c.funded) + ' funded',
-      profit:'Realised + open trader P&L above $0',
-      consistency:u.number(c.consistencyPassed) + ' within rule · ' + u.number(c.consistencyExempt) + ' no rule · funded only',
-      drawdown:'Either daily or maximum · 2 points of starting balance'
+      profit:u.number(c.profitAssessed) + ' assessed · ' + u.number(c.profitUnknown) + ' unavailable',
+      consistency:u.number(c.consistencyAssessed) + ' assessed profitable funded accounts · ' + u.number(c.consistencyPassed) + ' within rule',
+      drawdown:u.number(c.limitsAssessed) + ' fully assessed · ' + u.number(c.limitsIncomplete) + ' incomplete'
     };
-    return '<div class="aa-kpis" role="group" aria-label="Live account analytics">' + SEGMENTS.map(item => '<button class="aa-kpi aa-kpi-' + item.key + (r.state.segment === item.key ? ' active' : '') + '" data-action="account-analytics-segment" data-value="' + item.key + '" aria-pressed="' + (r.state.segment === item.key) + '"><span class="aa-kpi-label">' + item.label + u.icon(item.icon,17) + '</span><strong>' + u.number(c[item.key]) + '</strong><small>' + notes[item.key] + '</small><span class="aa-kpi-open">View accounts ' + u.icon('arrow',13) + '</span></button>').join('') + '</div>';
+    const value=item=>item.key==='profit'&&!c.profitAssessed?'Unavailable':item.key==='consistency'&&!c.consistencyAssessed?'Unavailable':item.key==='drawdown'&&!c.limitsAssessed?'Unavailable':u.number(c[item.key]);
+    return '<div class="aa-kpis" role="group" aria-label="Live account analytics">' + SEGMENTS.map(item => '<button class="aa-kpi aa-kpi-' + item.key + (r.state.segment === item.key ? ' active' : '') + '" data-action="account-analytics-segment" data-value="' + item.key + '" aria-pressed="' + (r.state.segment === item.key) + '"><span class="aa-kpi-label">' + item.label + u.icon(item.icon,17) + '</span><strong>' + value(item) + '</strong><small>' + notes[item.key] + '</small><span class="aa-kpi-open">View accounts ' + u.icon('arrow',13) + '</span></button>').join('') + '</div>';
   }
 
   function stagePanel(ctx,r){
