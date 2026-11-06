@@ -147,7 +147,6 @@ const server = createServer(async (request, response) => {
       response_type: "code",
       scope: "openid email profile",
       state,
-      login_hint: accessEmail,
       hl: "en",
       prompt: "select_account",
     }).toString();
