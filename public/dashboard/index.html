@@ -6908,7 +6908,16 @@ if (location.protocol !== 'file:') document.documentElement.classList.add('produ
   }
 
   function windowsFor(ctx){
-    const available=ctx.data.orders.map(o=>o.date).sort(),first=available[0],last=ctx.data.asOf||available[available.length-1];
+    const affiliateDates=ctx.data.orders.filter(o=>o.affiliateId).map(o=>o.date).filter(Boolean).sort();
+    const available=ctx.data.orders.map(o=>o.date).filter(Boolean).sort(),first=affiliateDates[0]||available[0],last=ctx.data.asOf||available[available.length-1];
+    const production=window.BIProductionConnector;
+    if(production&&production.state&&production.state.mode==='production'&&production.dateRange){
+      const current=production.dateRange(),count=Math.round((stamp(current[1])-stamp(current[0]))/DAY)+1;
+      const prior=[plus(current[0],-count),plus(current[0],-1)];
+      const comparable=prior[0]>=first&&prior[1]<=last;
+      return {period:'global',current,prior,comparable,currentLabel:short(current[0])+'–'+short(current[1]),priorLabel:short(prior[0])+'–'+short(prior[1]),first,last,
+        latestAffiliate:affiliateDates[affiliateDates.length-1]||'',reason:comparable?'Equal-length available periods':'Earlier comparison history is unavailable; no growth or drop-off is inferred.'};
+    }
     const period=(ctx.filters||{}).period||'mtd',endDate=new Date(stamp(last));
     let current,prior;
     const monthStart=date(Date.UTC(endDate.getUTCFullYear(),endDate.getUTCMonth(),1));
@@ -7027,7 +7036,7 @@ if (location.protocol !== 'file:') document.documentElement.classList.add('produ
       thresholds:defaultThresholds,snapshot:data.asOf};
   }
 
-  function controls(ctx,r){const u=ctx.ui,s=r.settings;return '<div class="afg-intro"><div><h2>Who earns the next traffic budget?</h2><p>Compare partner P&L, recent momentum and the countries behind the result.</p></div><div class="afg-window" role="group" aria-label="Affiliate comparison period">'+[['7d','Last 7 days'],['mtd','Month to date']].map(([key,label])=>'<button class="'+(r.windows.period===key?'active':'')+'" data-action="affgrowth-period" data-value="'+key+'" aria-pressed="'+(r.windows.period===key)+'">'+label+'</button>').join('')+'</div></div><div class="afg-scope"><div class="afg-type-tabs" role="group" aria-label="Affiliate traffic type">'+[['all','All affiliates'],['fast-track','Fast Track'],['traditional','Prop firm affiliates']].map(([key,label])=>'<button class="'+(s.trafficType===key?'active':'')+'" data-action="affgrowth-type" data-value="'+key+'" aria-pressed="'+(s.trafficType===key)+'">'+label+'</button>').join('')+'</div><span>'+u.escape(r.windows.currentLabel)+' '+(r.windows.comparable?'vs '+u.escape(r.windows.priorLabel):'· comparison unavailable')+' · USD</span></div>'+(r.windows.comparable?'':'<div class="afg-history-note">'+u.icon('info',15)+'<span>'+u.escape(r.windows.reason)+' History begins '+u.escape(short(r.windows.first))+'.</span></div>');}
+  function controls(ctx,r){const u=ctx.ui,s=r.settings,global=r.windows.period==='global';return '<div class="afg-intro"><div><h2>Who earns the next traffic budget?</h2><p>Compare partner P&L, recent momentum and the countries behind the result.</p></div><div class="afg-window" role="group" aria-label="Affiliate comparison period">'+(global?'<span class="active">Global reporting period</span>':[['7d','Last 7 days'],['mtd','Month to date']].map(([key,label])=>'<button class="'+(r.windows.period===key?'active':'')+'" data-action="affgrowth-period" data-value="'+key+'" aria-pressed="'+(r.windows.period===key)+'">'+label+'</button>').join(''))+'</div></div><div class="afg-scope"><div class="afg-type-tabs" role="group" aria-label="Affiliate traffic type">'+[['all','All affiliates'],['fast-track','Fast Track'],['traditional','Prop firm affiliates']].map(([key,label])=>'<button class="'+(s.trafficType===key?'active':'')+'" data-action="affgrowth-type" data-value="'+key+'" aria-pressed="'+(s.trafficType===key)+'">'+label+'</button>').join('')+'</div><span>'+u.escape(r.windows.currentLabel)+' '+(r.windows.comparable?'vs '+u.escape(r.windows.priorLabel):'· comparison unavailable')+' · USD</span></div>'+(r.windows.comparable?'':'<div class="afg-history-note">'+u.icon('info',15)+'<span>'+u.escape(r.windows.reason)+' History begins '+u.escape(short(r.windows.first))+'.'+(r.windows.latestAffiliate?' Latest live affiliate order: '+u.escape(short(r.windows.latestAffiliate))+'.':'')+'</span></div>');}
   function kpis(ctx,r){const u=ctx.ui;return '<div class="afg-kpis">'+[
     ['Affiliate P&L',amount(u,r.totals.profit),'After direct costs · before overheads & tax','all','dollar'],
     ['Growing partners',r.windows.comparable?u.number(r.summary.growing):'—',r.windows.comparable?'At least 10% higher net sales · meaningful sample':'Comparison history unavailable','growing','up'],
