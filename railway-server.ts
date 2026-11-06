@@ -236,7 +236,9 @@ const server = createServer(async (request, response) => {
   response.writeHead(200, {
     ...securityHeaders(),
     "content-type": mimeTypes[extname(file).toLowerCase()] || "application/octet-stream",
-    "cache-control": file.endsWith("index.html") ? "no-store" : "private, max-age=300",
+    "cache-control": file.endsWith("index.html") || file.endsWith("production-connector.js")
+      ? "no-store"
+      : "private, max-age=300",
   });
   createReadStream(file).pipe(response);
 });
