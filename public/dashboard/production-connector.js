@@ -117,12 +117,13 @@
     });
     var customers = (data.customers || []).map(function (row) {
       var rollup = orderRollups[row.id] || {};
-      return {
+      return Object.assign({}, row, {
         id: row.id, name: row.name, email: '', country: row.country,
         firstPurchase: row.firstOrderAt, programme: rollup.programme || 'Unknown', stage: row.status,
         accounts: row.accountCount, lastActive: row.lastOrderAt, totalSpend: Number(row.revenue) || 0,
+        allStatusOrderCount: row.orderCount,
         orderCount: row.completedOrderCount, kycVerified: row.kycVerified
-      };
+      });
     });
     return { orders: orders, customers: customers, affiliates: Object.keys(affiliateProfiles).map(function (key) { return affiliateProfiles[key]; }) };
   }
@@ -270,6 +271,7 @@
     window.BIData.productionMarketing = data.marketing && typeof data.marketing === 'object' ? data.marketing : null;
     window.BIData.productionWithdrawable = data.withdrawable && typeof data.withdrawable === 'object' ? data.withdrawable : null;
     window.BIData.productionRiskFindings = Array.isArray(data.riskFindings) ? data.riskFindings.slice() : [];
+    window.BIData.productionRebuy = Array.isArray(data.rebuy) ? data.rebuy.slice() : [];
     rebuildLiveDimensions();
     installLiveCalculations();
     window.BIData.asOf = payload.asOf;
@@ -360,6 +362,8 @@
     (data.affiliates || []).forEach(function (row) { if (isoDate(row.date)) values.push(isoDate(row.date)); });
     ((data.marketing && data.marketing.channels) || []).forEach(function (row) { if (isoDate(row.date)) values.push(isoDate(row.date)); });
     ((data.marketing && data.marketing.campaigns) || []).forEach(function (row) { if (isoDate(row.date)) values.push(isoDate(row.date)); });
+    (data.customers || []).forEach(function (row) { if (isoDate(row.registeredAt)) values.push(isoDate(row.registeredAt)); });
+    (data.rebuy || []).forEach(function (row) { if (isoDate(row.breachedAt)) values.push(isoDate(row.breachedAt)); });
     values.sort();
     var fallback = state.snapshot && state.snapshot.asOf
       ? state.snapshot.asOf
@@ -707,15 +711,23 @@
     var dateControl = document.querySelector('.date-control');
     if (!dateControl || state.mode !== 'production') return;
     var unavailablePages = new Set([
-      'competitors', 'pricing', 'updates', 'journey', 'rebuy'
+      'competitors', 'pricing', 'updates'
     ]);
     if (unavailablePages.has(page)) {
       var unavailableContent = document.getElementById('page-content');
       if (unavailableContent && !unavailableContent.querySelector('.no-live-data')) unavailableContent.innerHTML = noLiveDataPage(page);
     }
-    var datedPages = new Set(['overview', 'revenue', 'accounts', 'pipeline', 'affiliates', 'competitors', 'pricing', 'marketing', 'rebuy', 'updates', 'ltv', 'client-profit', 'journey', 'profitable-risk', 'risk-radar', 'payout-exposure', 'payout-consistency', 'reports']);
     var legacyFilters = document.getElementById('filters-row');
-    if (legacyFilters) legacyFilters.hidden = page === 'marketing';
+    if (legacyFilters) legacyFilters.hidden = page === 'marketing' || page === 'journey';
+    var currentOnlyPages = new Set(['profitable-risk', 'risk-radar', 'payout-exposure', 'payout-consistency']);
+    if (currentOnlyPages.has(page)) {
+      dateControl.hidden = false;
+      dateControl.innerHTML = '<div class="current-release-control"><small>CURRENT RELEASED SNAPSHOT</small><strong>'
+        + escapeHtml(state.snapshot && state.snapshot.asOf || '') + '</strong></div>';
+      dateControl.setAttribute('data-live-date-view', 'current-release:' + page);
+      return;
+    }
+    var datedPages = new Set(['overview', 'revenue', 'accounts', 'pipeline', 'affiliates', 'competitors', 'pricing', 'marketing', 'rebuy', 'updates', 'ltv', 'client-profit', 'journey', 'reports']);
     if (!datedPages.has(page)) return;
     dateControl.hidden = false;
     var key = state.dateAllTime + ':' + state.dateStart + ':' + state.dateEnd + ':' + state.datePickerOpen;
@@ -727,7 +739,9 @@
   function sanitizeProductionCopy() {
     if (state.mode !== 'production') return;
     var periodContext = document.querySelector('.filter-tail .period-context');
-    if (periodContext) periodContext.textContent = dateLabel() + ' · UTC';
+    if (periodContext) periodContext.textContent = ['profitable-risk', 'risk-radar', 'payout-exposure', 'payout-consistency'].includes(currentPage())
+      ? 'Current released snapshot · global dimensions apply'
+      : dateLabel() + ' · UTC';
     var replacements = [
       [/Demo import/gi, 'No live source'],
       [/Extended fictional history/gi, 'Live warehouse history'],
@@ -926,7 +940,7 @@
     var style = document.createElement('style');
     style.id = 'production-only-styles';
     style.textContent = '.live-source-banner{display:flex;justify-content:space-between;align-items:center;gap:24px;padding:22px 24px;margin-bottom:18px;border:1px solid #dce9e3;border-radius:9px;background:#f8fcfa}.live-source-kicker,.no-live-kicker{display:block;font-size:9px;font-weight:700;letter-spacing:1.2px;color:#3f8b69}.live-source-banner h2{margin:7px 0 5px;font-size:20px}.live-source-banner p{margin:0;color:#7b8793;font-size:10px}.live-source-count{text-align:right}.live-source-count strong{display:block;font-size:25px}.live-source-count span{font-size:9px;color:#7b8793}.live-range{display:flex;align-items:end;gap:12px;padding:16px 18px;margin-bottom:18px;border:1px solid #e2e7eb;border-radius:8px;background:#fff}.live-range label{display:flex;flex-direction:column;gap:6px;font-size:10px;color:#74808b}.live-range input{height:35px;border:1px solid #d7dfe5;border-radius:6px;padding:0 9px;color:#425466}.live-range .btn{height:35px}.no-live-data{min-height:360px;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:48px 24px;border:1px solid #e2e6ea;border-radius:10px;background:#fff}.no-live-icon{display:grid;place-items:center;width:44px;height:44px;border-radius:50%;background:#f2f4f6;color:#8b96a1;font-size:22px;margin-bottom:18px}.no-live-data h2{font-size:26px;margin:9px 0 10px}.no-live-data p:not(.no-live-kicker){max-width:520px;margin:0;color:#75818c;line-height:1.7}.no-live-data small{margin-top:14px;color:#9aa3ab}.demo-badge{border-color:#bcdcca!important;background:#f5fbf7!important;color:#337d5d!important}.demo-badge:before{background:#42a477!important}@media(max-width:720px){.live-source-banner{align-items:flex-start}.live-source-count{display:none}.live-range{align-items:stretch;flex-direction:column}}';
-    style.textContent += '.live-date-filter{position:relative;display:flex;justify-content:flex-end;margin:-4px 0 18px;z-index:15}.live-date-trigger{display:flex;align-items:center;gap:11px;min-width:250px;padding:10px 13px;border:1px solid #dfe5ea;border-radius:8px;background:#fff;color:#536577;text-align:left;box-shadow:0 1px 2px #23364b0a}.live-date-trigger:hover,.live-date-filter.open .live-date-trigger{border-color:#efad88;box-shadow:0 0 0 3px #f4773512}.live-date-trigger>span:nth-child(2){display:flex;flex:1;flex-direction:column;gap:2px}.live-date-trigger small{font-size:8px;letter-spacing:1px;color:#9aa6b1}.live-date-trigger strong{font-size:12px;font-weight:600;color:#425466}.live-date-trigger b{font-size:14px;color:#8b98a5}.live-date-calendar{display:grid;place-items:center;width:29px;height:29px;border-radius:7px;background:#fff1e8;color:#e26f35;font-size:17px}.live-date-popover{position:absolute;top:58px;right:0;display:grid;grid-template-columns:180px minmax(430px,1fr);width:min(760px,calc(100vw - 290px));min-height:390px;overflow:hidden;border:1px solid #e0e5ea;border-radius:12px;background:#fff;box-shadow:0 18px 55px #24394f24}.live-date-presets{padding:16px 12px;border-right:1px solid #e8ecf0;overflow:auto;max-height:470px}.live-date-presets button{display:block;width:100%;padding:8px 12px;border-radius:6px;color:#617184;font-size:12px;font-weight:550;text-align:left}.live-date-presets button:hover{background:#fff6f0;color:#d96831}.live-date-presets button.active{background:#f47735;color:#fff}.live-date-main{display:flex;flex-direction:column;padding:23px 26px 18px}.live-date-tabs{display:flex;justify-content:center;margin-bottom:24px}.live-date-tabs span{padding:9px 20px;border-radius:8px;background:#f47735;color:#fff;font-size:12px;font-weight:650}.live-date-summary{text-align:center;color:#4f6072;font-size:15px;font-weight:650;margin-bottom:28px}.live-date-fields{display:grid;grid-template-columns:1fr auto 1fr;align-items:end;gap:15px;padding:24px;border:1px solid #e7ebef;border-radius:10px;background:#fafbfc}.live-date-fields label{display:flex;flex-direction:column;gap:8px;color:#718091;font-size:10px;font-weight:600;letter-spacing:.4px;text-transform:uppercase}.live-date-fields input{width:100%;height:42px;padding:0 11px;border:1px solid #dbe2e8;border-radius:7px;background:#fff;color:#35485c;font-family:inherit;font-size:12px;font-weight:600;color-scheme:light}.live-date-fields>span{padding-bottom:12px;color:#a0abb5}.live-date-help{margin:14px 2px;color:#96a1ac;font-size:10px}.live-date-main footer{display:flex;justify-content:flex-end;gap:10px;margin-top:auto;padding-top:20px;border-top:1px solid #edf0f3}.live-date-main footer .btn{min-width:92px}.production-missing-source{display:flex;align-items:center;gap:12px;margin:0 0 18px;padding:14px 16px;border:1px solid #e2e7eb;border-radius:8px;background:#fff}.production-missing-source strong{color:#536577}.production-missing-source span{color:#8a96a1;font-size:10px}@media(max-width:850px){.live-date-popover{position:fixed;top:90px;left:18px;right:18px;width:auto;grid-template-columns:145px 1fr}.live-date-trigger{min-width:220px}}@media(max-width:620px){.live-date-popover{grid-template-columns:1fr;max-height:75vh;overflow:auto}.live-date-presets{display:flex;gap:6px;overflow:auto;border-right:0;border-bottom:1px solid #e8ecf0}.live-date-presets button{width:auto;white-space:nowrap}.live-date-main{padding:18px}.live-date-fields{grid-template-columns:1fr}.live-date-fields>span{display:none}}';
+    style.textContent += '.current-release-control{display:flex;min-width:220px;flex-direction:column;gap:3px;padding:9px 13px;border:1px solid #dfe5ea;border-radius:8px;background:#fff}.current-release-control small{font-size:8px;letter-spacing:1px;color:#8b99a6}.current-release-control strong{font-size:12px;color:#425466}.live-date-filter{position:relative;display:flex;justify-content:flex-end;margin:-4px 0 18px;z-index:15}.live-date-trigger{display:flex;align-items:center;gap:11px;min-width:250px;padding:10px 13px;border:1px solid #dfe5ea;border-radius:8px;background:#fff;color:#536577;text-align:left;box-shadow:0 1px 2px #23364b0a}.live-date-trigger:hover,.live-date-filter.open .live-date-trigger{border-color:#efad88;box-shadow:0 0 0 3px #f4773512}.live-date-trigger>span:nth-child(2){display:flex;flex:1;flex-direction:column;gap:2px}.live-date-trigger small{font-size:8px;letter-spacing:1px;color:#9aa6b1}.live-date-trigger strong{font-size:12px;font-weight:600;color:#425466}.live-date-trigger b{font-size:14px;color:#8b98a5}.live-date-calendar{display:grid;place-items:center;width:29px;height:29px;border-radius:7px;background:#fff1e8;color:#e26f35;font-size:17px}.live-date-popover{position:absolute;top:58px;right:0;display:grid;grid-template-columns:180px minmax(430px,1fr);width:min(760px,calc(100vw - 290px));min-height:390px;overflow:hidden;border:1px solid #e0e5ea;border-radius:12px;background:#fff;box-shadow:0 18px 55px #24394f24}.live-date-presets{padding:16px 12px;border-right:1px solid #e8ecf0;overflow:auto;max-height:470px}.live-date-presets button{display:block;width:100%;padding:8px 12px;border-radius:6px;color:#617184;font-size:12px;font-weight:550;text-align:left}.live-date-presets button:hover{background:#fff6f0;color:#d96831}.live-date-presets button.active{background:#f47735;color:#fff}.live-date-main{display:flex;flex-direction:column;padding:23px 26px 18px}.live-date-tabs{display:flex;justify-content:center;margin-bottom:24px}.live-date-tabs span{padding:9px 20px;border-radius:8px;background:#f47735;color:#fff;font-size:12px;font-weight:650}.live-date-summary{text-align:center;color:#4f6072;font-size:15px;font-weight:650;margin-bottom:28px}.live-date-fields{display:grid;grid-template-columns:1fr auto 1fr;align-items:end;gap:15px;padding:24px;border:1px solid #e7ebef;border-radius:10px;background:#fafbfc}.live-date-fields label{display:flex;flex-direction:column;gap:8px;color:#718091;font-size:10px;font-weight:600;letter-spacing:.4px;text-transform:uppercase}.live-date-fields input{width:100%;height:42px;padding:0 11px;border:1px solid #dbe2e8;border-radius:7px;background:#fff;color:#35485c;font-family:inherit;font-size:12px;font-weight:600;color-scheme:light}.live-date-fields>span{padding-bottom:12px;color:#a0abb5}.live-date-help{margin:14px 2px;color:#96a1ac;font-size:10px}.live-date-main footer{display:flex;justify-content:flex-end;gap:10px;margin-top:auto;padding-top:20px;border-top:1px solid #edf0f3}.live-date-main footer .btn{min-width:92px}.production-missing-source{display:flex;align-items:center;gap:12px;margin:0 0 18px;padding:14px 16px;border:1px solid #e2e7eb;border-radius:8px;background:#fff}.production-missing-source strong{color:#536577}.production-missing-source span{color:#8a96a1;font-size:10px}@media(max-width:850px){.live-date-popover{position:fixed;top:90px;left:18px;right:18px;width:auto;grid-template-columns:145px 1fr}.live-date-trigger{min-width:220px}}@media(max-width:620px){.live-date-popover{grid-template-columns:1fr;max-height:75vh;overflow:auto}.live-date-presets{display:flex;gap:6px;overflow:auto;border-right:0;border-bottom:1px solid #e8ecf0}.live-date-presets button{width:auto;white-space:nowrap}.live-date-main{padding:18px}.live-date-fields{grid-template-columns:1fr}.live-date-fields>span{display:none}}';
     document.head.appendChild(style);
   }
 

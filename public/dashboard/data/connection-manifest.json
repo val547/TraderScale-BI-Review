@@ -28,6 +28,16 @@
       "state": "live",
       "sources": ["trader_scale.dim_commerce_customers", "trader_scale.bridge_commerce_customer_orders", "trader_scale.fct_commerce_orders"]
     },
+    "journey": {
+      "label": "Customer Journey",
+      "state": "live",
+      "sources": ["trader_scale.dim_commerce_customers", "trader_scale.bridge_commerce_customer_orders", "trader_scale.src_prop_accounts"]
+    },
+    "rebuy": {
+      "label": "Breach to Rebuy",
+      "state": "live",
+      "sources": ["trader_scale.src_prop_accounts", "trader_scale.fct_commerce_orders", "trader_scale.bridge_commerce_prop_orders"]
+    },
     "marketing": {
       "label": "Paid marketing",
       "state": "live",
@@ -36,7 +46,7 @@
     "risk": {
       "label": "Risk Radar",
       "state": "live",
-      "sources": ["trader_scale.rule04_martingale_daily", "trader_scale.rule05_grid_daily", "trader_scale.rule06_adding_in_drawdown_daily", "trader_scale.rule09_one_sided_daily", "trader_scale.rule10_expert_advisor_daily", "trader_scale.rule12_hedge_trading_daily", "trader_scale.rule13_daily_loss_risk_daily"]
+      "sources": ["trader_scale.rule04_martingale_daily", "trader_scale.rule04b_loss_chasing_daily", "trader_scale.rule05_grid_daily", "trader_scale.rule06_adding_in_drawdown_daily", "trader_scale.rule09_one_sided_daily", "trader_scale.rule10_expert_advisor_daily", "trader_scale.rule12_hedge_trading_daily", "trader_scale.rule13_daily_loss_risk_daily", "trader_scale.rule15_toxic_daily"]
     },
     "withdrawable": {
       "label": "Withdrawable profit & payout exposure",

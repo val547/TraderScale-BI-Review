@@ -448,11 +448,71 @@ ORDER BY o.order_reporting_date DESC, net_revenue DESC
 `;
 
 const CUSTOMERS_SQL = `
-SELECT commerce_customer_key, full_name, country, status, identity_source,
-  account_count, order_count, completed_order_count, first_order_at, last_order_at,
-  revenue_usd, all_status_order_value_usd, kyc_verified
-FROM \`trader-scale-486213.trader_scale.dim_commerce_customers\`
+WITH latest_axcera AS (
+  SELECT customer_id, created_at
+  FROM \`trader-scale-486213.trader_scale.dim_customers\`
+  QUALIFY ROW_NUMBER() OVER (PARTITION BY customer_id ORDER BY etl_updated_at DESC, etl_loaded_at DESC, updated_at DESC) = 1
+)
+SELECT d.commerce_customer_key, d.warehouse_customer_id, d.warehouse_customer_nr,
+  d.woocommerce_customer_id, d.full_name, d.country, d.status, d.identity_source,
+  d.account_count, d.order_count, d.completed_order_count, d.first_order_at, d.last_order_at,
+  IF(d.warehouse_customer_id IS NOT NULL, a.created_at, d.registered_at) AS registered_at,
+  d.has_guest_order, d.is_woocommerce_registered, d.refreshed_at,
+  d.revenue_usd, d.all_status_order_value_usd, d.kyc_verified
+FROM \`trader-scale-486213.trader_scale.dim_commerce_customers\` AS d
+LEFT JOIN latest_axcera AS a ON a.customer_id = d.warehouse_customer_id
 ORDER BY revenue_usd DESC
+`;
+
+const REBUY_SQL = `
+WITH breaches AS (
+  SELECT account_id, CAST(account_nr AS STRING) AS account_nr, customer_id,
+    plan, plan_category_name, platform, breached_at,
+    COALESCE(etl_updated_at, etl_loaded_at, updated_at, created_at) AS observed_at
+  FROM \`trader-scale-486213.trader_scale.src_prop_accounts\`
+  WHERE breached_at IS NOT NULL AND customer_id IS NOT NULL
+  QUALIFY ROW_NUMBER() OVER (
+    PARTITION BY account_id ORDER BY COALESCE(etl_updated_at, etl_loaded_at, updated_at, created_at) DESC
+  ) = 1
+), purchases AS (
+  SELECT DISTINCT p.customer_id, o.store_id, o.order_id, o.order_created_at,
+    o.net_revenue_usd, o.status
+  FROM \`trader-scale-486213.trader_scale.fct_commerce_orders\` AS o
+  JOIN \`trader-scale-486213.trader_scale.bridge_commerce_prop_orders\` AS p
+    USING (store_id, order_id)
+  WHERE o.is_net_revenue_eligible AND o.net_revenue_usd > 0
+), candidates AS (
+  SELECT b.account_id, b.account_nr, b.customer_id, b.plan, b.plan_category_name,
+    b.platform, b.breached_at, b.observed_at, p.store_id, p.order_id,
+    p.order_created_at AS rebuy_at, p.net_revenue_usd AS rebuy_revenue,
+    ROW_NUMBER() OVER (PARTITION BY p.customer_id, p.store_id, p.order_id ORDER BY b.breached_at DESC, b.account_id) AS breach_rank
+  FROM purchases AS p
+  JOIN breaches AS b ON b.customer_id = p.customer_id AND b.breached_at < p.order_created_at
+), cycles AS (
+  SELECT * EXCEPT(breach_rank)
+  FROM candidates
+  WHERE breach_rank = 1
+  QUALIFY ROW_NUMBER() OVER (PARTITION BY customer_id, breached_at ORDER BY rebuy_at, store_id, order_id) = 1
+), details AS (
+  SELECT account_id, start_balance, currency, plan_label, fetched_at
+  FROM \`trader-scale-486213.trader_scale.src_prop_accounts_detail\`
+  QUALIFY ROW_NUMBER() OVER (PARTITION BY account_id ORDER BY fetched_at DESC, updated_at DESC, created_at DESC) = 1
+), customers AS (
+  SELECT customer_id, full_name, country
+  FROM \`trader-scale-486213.trader_scale.dim_customers\`
+  QUALIFY ROW_NUMBER() OVER (PARTITION BY customer_id ORDER BY etl_updated_at DESC, etl_loaded_at DESC, updated_at DESC) = 1
+)
+SELECT b.account_id, b.account_nr, b.customer_id, c.full_name AS customer_name,
+  c.country, b.plan, b.plan_category_name, b.platform, d.plan_label,
+  d.start_balance, d.currency, CAST(b.breached_at AS STRING) AS breached_at,
+  CAST(b.observed_at AS STRING) AS observed_at, x.store_id, x.order_id,
+  CAST(x.rebuy_at AS STRING) AS rebuy_at, x.rebuy_revenue,
+  IF(x.rebuy_at IS NULL, NULL, TIMESTAMP_DIFF(x.rebuy_at, b.breached_at, SECOND)) AS rebuy_seconds
+FROM breaches AS b
+LEFT JOIN cycles AS x ON x.account_id = b.account_id AND x.breached_at = b.breached_at
+LEFT JOIN details AS d ON d.account_id = b.account_id
+LEFT JOIN customers AS c ON c.customer_id = b.customer_id
+ORDER BY b.breached_at DESC
 `;
 
 const THOUGHTMETRIC_CHANNEL_SQL = `
@@ -536,35 +596,45 @@ LIMIT 1
 `;
 
 const RISK_FINDINGS_SQL = `
-SELECT 'martingale' AS rule, breach_id, severity, CAST(account_nr AS STRING) AS account_nr,
+SELECT 'martingale' AS rule, breach_id, IF(sequence_length >= 3, 'Breach', 'Watch') AS severity, CAST(account_nr AS STRING) AS account_nr,
   customer_id, plan, symbol, CAST(wave_open_timestamp AS STRING) AS finding_at,
   CONCAT('Sequence ', CAST(sequence_length AS STRING), ' · risk ', CAST(wave_risk AS STRING)) AS evidence
 FROM \`trader-scale-486213.trader_scale.rule04_martingale_daily\`
 UNION ALL
-SELECT 'grid', breach_id, severity, CAST(account_nr AS STRING), customer_id, plan, symbol,
+SELECT 'loss_chasing', breach_id, 'Warning', CAST(account_nr AS STRING), customer_id, plan, symbol,
+  CAST(wave_open_timestamp AS STRING), CONCAT('Sequence ', CAST(sequence_length AS STRING), ' · risk ', CAST(wave_risk AS STRING))
+FROM \`trader-scale-486213.trader_scale.rule04b_loss_chasing_daily\`
+UNION ALL
+SELECT 'grid', breach_id, 'Breach', CAST(account_nr AS STRING), customer_id, plan, symbol,
   CAST(grid_open_timestamp AS STRING), CONCAT(CAST(grid_orders AS STRING), ' grid orders')
 FROM \`trader-scale-486213.trader_scale.rule05_grid_daily\`
 UNION ALL
-SELECT 'adding_in_drawdown', breach_id, severity, CAST(account_nr AS STRING), customer_id, plan, symbol,
+SELECT 'adding_in_drawdown', breach_id, 'Breach', CAST(account_nr AS STRING), customer_id, plan, symbol,
   CAST(open_timestamp AS STRING), CONCAT(CAST(adds_in_episode AS STRING), ' adds · risk ', CAST(combined_floating_risk AS STRING))
 FROM \`trader-scale-486213.trader_scale.rule06_adding_in_drawdown_daily\`
 UNION ALL
-SELECT 'one_sided', breach_id, severity, CAST(account_nr AS STRING), customer_id, plan, NULL,
+SELECT 'one_sided', breach_id, IF(dir_flag OR dispersion_flag, 'Review', 'Watch'), CAST(account_nr AS STRING), customer_id, plan, NULL,
   NULL, CONCAT(CAST(trades AS STRING), ' trades · bias ', CAST(directional_bias AS STRING))
 FROM \`trader-scale-486213.trader_scale.rule09_one_sided_daily\`
 UNION ALL
-SELECT 'expert_advisor', breach_id, severity, CAST(account_nr AS STRING), customer_id, plan, symbol,
+SELECT 'expert_advisor', breach_id, 'Breach', CAST(account_nr AS STRING), customer_id, plan, symbol,
   CAST(open_timestamp AS STRING), CONCAT('EA ', CAST(expert_id AS STRING), ' · risk ', CAST(risk_pct AS STRING))
 FROM \`trader-scale-486213.trader_scale.rule10_expert_advisor_daily\`
 UNION ALL
 SELECT 'hedge_trading', CONCAT('hedge:', COALESCE(customer_id, ''), ':', COALESCE(CAST(buy_account AS STRING), ''), ':', COALESCE(CAST(sell_account AS STRING), ''), ':', COALESCE(symbol, ''), ':', COALESCE(CAST(buy_position_id AS STRING), ''), ':', COALESCE(CAST(sell_position_id AS STRING), '')),
-  'Review', CAST(buy_account AS STRING), customer_id, buy_plan, symbol,
+  'Breach', CAST(buy_account AS STRING), customer_id, buy_plan, symbol,
   CAST(buy_open_timestamp AS STRING), CONCAT('Overlap ', CAST(overlap_seconds AS STRING), ' sec')
 FROM \`trader-scale-486213.trader_scale.rule12_hedge_trading_daily\`
 UNION ALL
-SELECT 'daily_loss_risk', breach_id, severity, CAST(account_nr AS STRING), customer_id, plan, symbol,
+SELECT 'daily_loss_risk', breach_id, 'Breach', CAST(account_nr AS STRING), customer_id, plan, symbol,
   CAST(open_timestamp AS STRING), CONCAT(trigger, ' · risk ', CAST(risk_pct AS STRING), ' / limit ', CAST(limit_pct AS STRING))
 FROM \`trader-scale-486213.trader_scale.rule13_daily_loss_risk_daily\`
+UNION ALL
+SELECT 'toxic', breach_id,
+  CASE WHEN toxic_profit_pct > 60 THEN 'Breach' WHEN toxic_profit_pct > 0 THEN 'Deduction' ELSE 'Watch' END,
+  CAST(account_nr AS STRING), customer_id, plan, NULL, NULL,
+  CONCAT(CAST(neg_rr_trades AS STRING), ' negative-RR trades · toxic profit ', CAST(toxic_profit_pct AS STRING), '%')
+FROM \`trader-scale-486213.trader_scale.rule15_toxic_daily\`
 `;
 
 export async function buildSnapshot(serviceAccountJson: string) {
@@ -578,7 +648,7 @@ export async function buildSnapshot(serviceAccountJson: string) {
   ]);
   const [orderResult, profitabilityResult, affiliateResult, customerResult, tradeResult,
     marketingChannelResult, marketingCampaignResult, marketingAttributionResult, marketingLtvResult,
-    withdrawableResult, withdrawableRunResult, riskFindingsResult] = await Promise.all([
+    withdrawableResult, withdrawableRunResult, riskFindingsResult, rebuyResult] = await Promise.all([
     optionalQuery(credential, token, "Canonical orders", ORDERS_SQL),
     optionalQuery(credential, token, "Attempt profitability", PROFITABILITY_SQL),
     optionalQuery(credential, token, "Affiliate attribution", AFFILIATES_SQL),
@@ -591,6 +661,7 @@ export async function buildSnapshot(serviceAccountJson: string) {
     optionalQuery(credential, token, "Withdrawable profit", WITHDRAWABLE_SQL),
     optionalQuery(credential, token, "Withdrawable profit run", WITHDRAWABLE_RUN_SQL),
     optionalQuery(credential, token, "Risk findings", RISK_FINDINGS_SQL),
+    optionalQuery(credential, token, "Breach to rebuy", REBUY_SQL),
   ]);
   const orderRows = orderResult.rows;
   const profitabilityRows = profitabilityResult.rows;
@@ -600,7 +671,7 @@ export async function buildSnapshot(serviceAccountJson: string) {
   const tradeByAccount = new Map(tradeRows.map((row) => [text(row.account_id), row]));
   const queryErrors = [orderResult.error, profitabilityResult.error, affiliateResult.error, customerResult.error, tradeResult.error,
     marketingChannelResult.error, marketingCampaignResult.error, marketingAttributionResult.error, marketingLtvResult.error,
-    withdrawableResult.error, withdrawableRunResult.error, riskFindingsResult.error].filter(Boolean);
+    withdrawableResult.error, withdrawableRunResult.error, riskFindingsResult.error, rebuyResult.error].filter(Boolean);
 
   const accounts = accountRows.map((row) => {
     const trade = tradeByAccount.get(text(row.account_id));
@@ -620,7 +691,7 @@ export async function buildSnapshot(serviceAccountJson: string) {
       plan: text(row.plan, text(row.plan_category_name)), planCategory: text(row.plan_category_name), platform: platform(row),
       accountSize: planSize || initialBalance, accountSizeSource: planSize ? "plan-derived" : initialBalance ? "evidenced-start-balance" : "unknown",
       country: text(row.country, "Unknown"), channel: "Unknown",
-      openedAt: date(row.created_at), stage, status,
+      openedAt: date(row.created_at), breachedAt: text(row.breached_at), stage, status,
       initialBalance, balance, equity, realizedPnl, openPnl: balance !== null && equity !== null ? equity - balance : null,
       dailyStartEquity: equity, dailyDrawdownUsed: null, dailyDrawdownLimit: null,
       maxDrawdownUsed: null, maxDrawdownLimit: null,
@@ -704,10 +775,16 @@ export async function buildSnapshot(serviceAccountJson: string) {
 
   const customers = customerRows.map((row) => ({
     id: text(row.commerce_customer_key), name: text(row.full_name, "No live data"),
+    warehouseCustomerId: text(row.warehouse_customer_id), warehouseCustomerNr: text(row.warehouse_customer_nr),
+    woocommerceCustomerId: text(row.woocommerce_customer_id),
     country: text(row.country, "No live data"), status: text(row.status, "No live data"),
     identitySource: text(row.identity_source), accountCount: number(row.account_count),
     orderCount: number(row.order_count), completedOrderCount: number(row.completed_order_count),
     firstOrderAt: date(row.first_order_at), lastOrderAt: date(row.last_order_at),
+    registeredAt: text(row.registered_at), hasGuestOrder: row.has_guest_order === true || text(row.has_guest_order) === "true",
+    woocommerceRegistered: row.is_woocommerce_registered === true || text(row.is_woocommerce_registered) === "true",
+    registrationSource: text(row.warehouse_customer_id) ? "Axcera" : text(row.woocommerce_customer_id) ? "WooCommerce" : "Unknown",
+    refreshedAt: text(row.refreshed_at),
     revenue: number(row.revenue_usd), allStatusOrderValue: number(row.all_status_order_value_usd),
     kycVerified: row.kyc_verified === true || text(row.kyc_verified) === "true",
   }));
@@ -848,7 +925,7 @@ export async function buildSnapshot(serviceAccountJson: string) {
       ? `${row.riskDetectionCount} live detector finding${row.riskDetectionCount === 1 ? "" : "s"}; state ${row.riskState}.`
       : `Released risk state: ${row.riskState}.`;
   });
-  const riskFindings = riskFindingsResult.rows.map((row) => {
+  const mappedRiskFindings = riskFindingsResult.rows.map((row) => {
     const account = liveAccountByLogin.get(text(row.account_nr));
     return {
       id: text(row.breach_id), rule: text(row.rule), severity: text(row.severity, "Review"), accountNr: text(row.account_nr),
@@ -856,6 +933,21 @@ export async function buildSnapshot(serviceAccountJson: string) {
       customerName: account?.customerName || "Unknown customer", programme: account?.programme || text(row.plan, "Unknown"),
       accountSize: account?.accountSize || 0, country: account?.country || "Unknown", channel: account?.channel || "Unknown",
       symbol: text(row.symbol), findingAt: text(row.finding_at), evidence: text(row.evidence),
+    };
+  });
+  const riskFindings = Array.from(new Map(mappedRiskFindings.map((row) => [`${row.rule}|${row.id}`, row])).values());
+  const rebuy = rebuyResult.rows.map((row) => {
+    const account = liveAccountById.get(text(row.account_id)) || liveAccountByLogin.get(text(row.account_nr));
+    const seconds = optionalNumber(row.rebuy_seconds);
+    return {
+      accountId: text(row.account_id), accountNr: text(row.account_nr), customerId: text(row.customer_id),
+      customerName: text(row.customer_name, account?.customerName || "Unknown customer"), country: text(row.country, account?.country || "Unknown"),
+      programme: account?.programme || productPlan({ plan: row.plan, plan_category_name: row.plan_category_name, platform: row.platform }, row.start_balance),
+      plan: text(row.plan_label, text(row.plan)), platform: platform({ platform: row.platform, plan: row.plan }),
+      accountSize: optionalNumber(row.start_balance) ?? account?.accountSize ?? 0, currency: text(row.currency, "USD"),
+      breachedAt: text(row.breached_at), observedAt: text(row.observed_at),
+      rebuyStoreId: text(row.store_id), rebuyOrderId: text(row.order_id), rebuyAt: text(row.rebuy_at),
+      rebuyRevenue: number(row.rebuy_revenue), rebuySeconds: seconds, rebuyDays: seconds === null ? null : seconds / 86400,
     };
   });
 
@@ -873,18 +965,20 @@ export async function buildSnapshot(serviceAccountJson: string) {
       marketingReady: !marketingChannelResult.error && !marketingCampaignResult.error && !marketingAttributionResult.error,
       withdrawableReady: !withdrawableResult.error && !withdrawableRunResult.error,
       riskFindingsReady: !riskFindingsResult.error,
+      journeyReady: !customerResult.error,
+      rebuyReady: !rebuyResult.error,
       partial: queryErrors.length > 0,
       warnings: [
-        "Live canonical orders, attempt profitability, affiliates, customers, accounts, payouts, account trades, ThoughtMetric paid marketing, withdrawable profit and risk detector findings are enabled.",
+        "Live canonical orders, attempt profitability, affiliates, customers, accounts, payouts, account trades, ThoughtMetric paid marketing, withdrawable profit, customer journey, breach-to-rebuy and nine current risk detector snapshots are enabled.",
         `Loaded ${orders.length} canonical orders (${eligibleOrders.length} revenue eligible), ${customers.length} commerce customers, ${accounts.length} current account records, ${payouts.length} payout records and ${tradeRows.length} account trade aggregates.`,
         `Latest canonical order date: ${maxOrderDate}; latest revenue-eligible order date: ${maxEligibleOrderDate}.`,
         `Latest affiliate-source order date: ${latestAffiliateRowDate}; latest attributed affiliate order date: ${latestAttributedAffiliateDate}.`,
-        "Risk detector and business-change screens remain unavailable until their exact live contracts are connected.",
+        "Pricing and business-change screens remain unavailable because no complete approved production contracts exist.",
         ...queryErrors,
       ],
     },
     data: { accounts, payouts, orders, profitability, affiliates, customers, marketing,
-      withdrawable: { accounts: withdrawableAccounts, run: withdrawableRun }, riskFindings },
+      withdrawable: { accounts: withdrawableAccounts, run: withdrawableRun }, riskFindings, rebuy },
   };
 }
 
