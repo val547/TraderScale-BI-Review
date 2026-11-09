@@ -268,6 +268,8 @@
     replaceArray(window.BIData.customers, adapted.customers);
     window.BIData.productionProfitability = Array.isArray(data.profitability) ? data.profitability.slice() : [];
     window.BIData.productionMarketing = data.marketing && typeof data.marketing === 'object' ? data.marketing : null;
+    window.BIData.productionWithdrawable = data.withdrawable && typeof data.withdrawable === 'object' ? data.withdrawable : null;
+    window.BIData.productionRiskFindings = Array.isArray(data.riskFindings) ? data.riskFindings.slice() : [];
     rebuildLiveDimensions();
     installLiveCalculations();
     window.BIData.asOf = payload.asOf;
@@ -705,8 +707,7 @@
     var dateControl = document.querySelector('.date-control');
     if (!dateControl || state.mode !== 'production') return;
     var unavailablePages = new Set([
-      'competitors', 'pricing', 'updates', 'client-profit', 'journey', 'rebuy',
-      'profitable-risk', 'risk-radar', 'payout-exposure', 'payout-consistency'
+      'competitors', 'pricing', 'updates', 'journey', 'rebuy'
     ]);
     if (unavailablePages.has(page)) {
       var unavailableContent = document.getElementById('page-content');

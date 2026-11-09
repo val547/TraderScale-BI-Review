@@ -35,8 +35,13 @@
     },
     "risk": {
       "label": "Risk Radar",
-      "state": "no_live_data",
-      "sources": ["trader_scale.rule04_martingale_daily", "trader_scale.rule05_grid_daily", "trader_scale.rule06_adding_in_drawdown_daily", "trader_scale_app.breach_reviews"]
+      "state": "live",
+      "sources": ["trader_scale.rule04_martingale_daily", "trader_scale.rule05_grid_daily", "trader_scale.rule06_adding_in_drawdown_daily", "trader_scale.rule09_one_sided_daily", "trader_scale.rule10_expert_advisor_daily", "trader_scale.rule12_hedge_trading_daily", "trader_scale.rule13_daily_loss_risk_daily"]
+    },
+    "withdrawable": {
+      "label": "Withdrawable profit & payout exposure",
+      "state": "live",
+      "sources": ["trader_scale.rpt_withdrawable_profit_account_current", "trader_scale.rpt_withdrawable_profit_current_run"]
     },
     "profitability": {
       "label": "Owner Overview & Profitability",

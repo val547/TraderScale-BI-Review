@@ -505,6 +505,68 @@ FROM \`trader-scale-486213.trader_scale.rpt_paid_customer_ltv\`
 ORDER BY acquisition_date DESC
 `;
 
+const WITHDRAWABLE_SQL = `
+SELECT run_id, policy_version, CAST(calculated_at AS STRING) AS calculated_at,
+  CAST(source_as_of AS STRING) AS source_as_of, account_id, account_nr,
+  customer_id, customer_nr, customer_name, account_status, is_active,
+  is_funded, is_breached, plan_id, product_id, plan_label, raw_plan,
+  plan_family, account_size_label, start_balance_usd, currency,
+  pending_payout_id, pending_payout_amount_usd, realized_cycle_profit_usd,
+  current_balance_usd, current_equity_usd, equity_supported_profit_usd,
+  eligible_profit_before_rules_usd, minimum_profit_usd,
+  profit_share_percentage, trading_days_actual, trading_days_required,
+  consistency_type, consistency_actual_percentage,
+  consistency_required_percentage, open_lots, kyc_status, risk_state,
+  risk_detection_count, financially_eligible, ready_to_request,
+  estimated_withdrawable_profit_usd, primary_status,
+  ARRAY_TO_STRING(reason_codes, ', ') AS reason_codes,
+  current_affiliate_id, current_affiliate_name, coverage_known,
+  ARRAY_TO_STRING(coverage_warnings, ', ') AS coverage_warnings
+FROM \`trader-scale-486213.trader_scale.rpt_withdrawable_profit_account_current\`
+ORDER BY estimated_withdrawable_profit_usd DESC, account_id
+`;
+
+const WITHDRAWABLE_RUN_SQL = `
+SELECT run_id, policy_version, status, CAST(completed_at AS STRING) AS completed_at,
+  expected_account_count, result_account_count, unknown_account_count,
+  financially_eligible_count, ready_account_count, pending_account_count,
+  known_withdrawable_profit_usd, pending_overlap_usd, error_message
+FROM \`trader-scale-486213.trader_scale.rpt_withdrawable_profit_current_run\`
+LIMIT 1
+`;
+
+const RISK_FINDINGS_SQL = `
+SELECT 'martingale' AS rule, breach_id, severity, CAST(account_nr AS STRING) AS account_nr,
+  customer_id, plan, symbol, CAST(wave_open_timestamp AS STRING) AS finding_at,
+  CONCAT('Sequence ', CAST(sequence_length AS STRING), ' · risk ', CAST(wave_risk AS STRING)) AS evidence
+FROM \`trader-scale-486213.trader_scale.rule04_martingale_daily\`
+UNION ALL
+SELECT 'grid', breach_id, severity, CAST(account_nr AS STRING), customer_id, plan, symbol,
+  CAST(grid_open_timestamp AS STRING), CONCAT(CAST(grid_orders AS STRING), ' grid orders')
+FROM \`trader-scale-486213.trader_scale.rule05_grid_daily\`
+UNION ALL
+SELECT 'adding_in_drawdown', breach_id, severity, CAST(account_nr AS STRING), customer_id, plan, symbol,
+  CAST(open_timestamp AS STRING), CONCAT(CAST(adds_in_episode AS STRING), ' adds · risk ', CAST(combined_floating_risk AS STRING))
+FROM \`trader-scale-486213.trader_scale.rule06_adding_in_drawdown_daily\`
+UNION ALL
+SELECT 'one_sided', breach_id, severity, CAST(account_nr AS STRING), customer_id, plan, NULL,
+  NULL, CONCAT(CAST(trades AS STRING), ' trades · bias ', CAST(directional_bias AS STRING))
+FROM \`trader-scale-486213.trader_scale.rule09_one_sided_daily\`
+UNION ALL
+SELECT 'expert_advisor', breach_id, severity, CAST(account_nr AS STRING), customer_id, plan, symbol,
+  CAST(open_timestamp AS STRING), CONCAT('EA ', CAST(expert_id AS STRING), ' · risk ', CAST(risk_pct AS STRING))
+FROM \`trader-scale-486213.trader_scale.rule10_expert_advisor_daily\`
+UNION ALL
+SELECT 'hedge_trading', CONCAT('hedge:', COALESCE(customer_id, ''), ':', COALESCE(CAST(buy_account AS STRING), ''), ':', COALESCE(CAST(sell_account AS STRING), ''), ':', COALESCE(symbol, ''), ':', COALESCE(CAST(buy_position_id AS STRING), ''), ':', COALESCE(CAST(sell_position_id AS STRING), '')),
+  'Review', CAST(buy_account AS STRING), customer_id, buy_plan, symbol,
+  CAST(buy_open_timestamp AS STRING), CONCAT('Overlap ', CAST(overlap_seconds AS STRING), ' sec')
+FROM \`trader-scale-486213.trader_scale.rule12_hedge_trading_daily\`
+UNION ALL
+SELECT 'daily_loss_risk', breach_id, severity, CAST(account_nr AS STRING), customer_id, plan, symbol,
+  CAST(open_timestamp AS STRING), CONCAT(trigger, ' · risk ', CAST(risk_pct AS STRING), ' / limit ', CAST(limit_pct AS STRING))
+FROM \`trader-scale-486213.trader_scale.rule13_daily_loss_risk_daily\`
+`;
+
 export async function buildSnapshot(serviceAccountJson: string) {
   if (!serviceAccountJson) throw new Error("BigQuery secret is not configured.");
   const credential = JSON.parse(serviceAccountJson) as ServiceAccount;
@@ -515,7 +577,8 @@ export async function buildSnapshot(serviceAccountJson: string) {
     query(credential, token, PAYOUTS_SQL),
   ]);
   const [orderResult, profitabilityResult, affiliateResult, customerResult, tradeResult,
-    marketingChannelResult, marketingCampaignResult, marketingAttributionResult, marketingLtvResult] = await Promise.all([
+    marketingChannelResult, marketingCampaignResult, marketingAttributionResult, marketingLtvResult,
+    withdrawableResult, withdrawableRunResult, riskFindingsResult] = await Promise.all([
     optionalQuery(credential, token, "Canonical orders", ORDERS_SQL),
     optionalQuery(credential, token, "Attempt profitability", PROFITABILITY_SQL),
     optionalQuery(credential, token, "Affiliate attribution", AFFILIATES_SQL),
@@ -525,6 +588,9 @@ export async function buildSnapshot(serviceAccountJson: string) {
     optionalQuery(credential, token, "ThoughtMetric campaigns", THOUGHTMETRIC_CAMPAIGN_SQL),
     optionalQuery(credential, token, "ThoughtMetric attribution", THOUGHTMETRIC_ATTRIBUTION_SQL),
     optionalQuery(credential, token, "ThoughtMetric customer LTV", THOUGHTMETRIC_LTV_SQL),
+    optionalQuery(credential, token, "Withdrawable profit", WITHDRAWABLE_SQL),
+    optionalQuery(credential, token, "Withdrawable profit run", WITHDRAWABLE_RUN_SQL),
+    optionalQuery(credential, token, "Risk findings", RISK_FINDINGS_SQL),
   ]);
   const orderRows = orderResult.rows;
   const profitabilityRows = profitabilityResult.rows;
@@ -533,7 +599,8 @@ export async function buildSnapshot(serviceAccountJson: string) {
   const tradeRows = tradeResult.rows;
   const tradeByAccount = new Map(tradeRows.map((row) => [text(row.account_id), row]));
   const queryErrors = [orderResult.error, profitabilityResult.error, affiliateResult.error, customerResult.error, tradeResult.error,
-    marketingChannelResult.error, marketingCampaignResult.error, marketingAttributionResult.error, marketingLtvResult.error].filter(Boolean);
+    marketingChannelResult.error, marketingCampaignResult.error, marketingAttributionResult.error, marketingLtvResult.error,
+    withdrawableResult.error, withdrawableRunResult.error, riskFindingsResult.error].filter(Boolean);
 
   const accounts = accountRows.map((row) => {
     const trade = tradeByAccount.get(text(row.account_id));
@@ -559,7 +626,7 @@ export async function buildSnapshot(serviceAccountJson: string) {
       maxDrawdownUsed: null, maxDrawdownLimit: null,
       dailyHeadroom: null, maxHeadroom: null, profitTarget: null, profitTargetRemaining: null,
       rewardShare: share === null ? null : share > 1 ? share / 100 : share,
-      payoutAccrued: null, payoutApproved: number(row.approved_unpaid), payoutPaid: number(row.paid_total),
+      payoutAccrued: null as number | null, payoutApproved: number(row.approved_unpaid), payoutPaid: number(row.paid_total),
       eligibleNow: false, riskLevel: stage === "Breached" ? "High" : "Normal",
       riskReason: stage === "Breached" ? "Account is marked breached in the warehouse." : "No live detector severity is joined to this account snapshot.",
       tradeCount: trade ? optionalNumber(trade.trade_count) : null,
@@ -569,7 +636,7 @@ export async function buildSnapshot(serviceAccountJson: string) {
       tradeNetRealized: trade ? number(trade.net_realized) : null,
       firstClosedTradeAt: trade ? date(trade.first_closed_trade_at) : "",
       lastClosedTradeAt: trade ? date(trade.last_closed_trade_at) : "",
-      tradeHistoryAvailable: Boolean(trade), consistency: null, profitDays: null,
+      tradeHistoryAvailable: Boolean(trade), consistency: null as number | null, profitDays: null as number | null,
       challengeFormat: challengeFormat(row), phase: challengePhase(row, stage), snapshotAt: date(row.snapshot_at),
       daysSinceOpen: Math.max(0, Math.floor((Date.now() - Date.parse(`${date(row.created_at)}T00:00:00Z`)) / 86400000)),
       demoRules: false,
@@ -734,6 +801,64 @@ export async function buildSnapshot(serviceAccountJson: string) {
     attribution: attributionRows, customerLtv: marketingLtv,
   };
 
+  const liveAccountById = new Map(accounts.map((row) => [row.id, row]));
+  const liveAccountByLogin = new Map(accounts.map((row) => [String(row.login), row]));
+  const withdrawableAccounts = withdrawableResult.rows.map((row) => {
+    const account = liveAccountById.get(text(row.account_id)) || liveAccountByLogin.get(text(row.account_nr));
+    return {
+      runId: text(row.run_id), policyVersion: text(row.policy_version), calculatedAt: text(row.calculated_at),
+      sourceAsOf: text(row.source_as_of), accountId: text(row.account_id), accountNr: text(row.account_nr),
+      customerId: text(row.customer_id), customerNr: text(row.customer_nr), customerName: text(row.customer_name, "Unknown customer"),
+      accountStatus: text(row.account_status), active: row.is_active === true || text(row.is_active) === "true",
+      funded: row.is_funded === true || text(row.is_funded) === "true", breached: row.is_breached === true || text(row.is_breached) === "true",
+      programme: account?.programme || text(row.plan_family, "Unknown"), plan: text(row.plan_label, text(row.raw_plan)),
+      accountSize: optionalNumber(row.start_balance_usd) ?? optionalNumber(row.account_size_label) ?? account?.accountSize ?? 0,
+      country: account?.country || "Unknown", channel: account?.channel || "Unknown",
+      currency: text(row.currency, "USD"), pendingPayoutId: text(row.pending_payout_id), pendingPayout: number(row.pending_payout_amount_usd),
+      realizedProfit: number(row.realized_cycle_profit_usd), balance: optionalNumber(row.current_balance_usd),
+      equity: optionalNumber(row.current_equity_usd), equitySupportedProfit: number(row.equity_supported_profit_usd),
+      eligibleProfitBeforeRules: number(row.eligible_profit_before_rules_usd), minimumProfit: number(row.minimum_profit_usd),
+      profitSharePercentage: optionalNumber(row.profit_share_percentage), tradingDaysActual: number(row.trading_days_actual),
+      tradingDaysRequired: number(row.trading_days_required), consistencyType: text(row.consistency_type),
+      consistencyActual: optionalNumber(row.consistency_actual_percentage), consistencyRequired: optionalNumber(row.consistency_required_percentage),
+      openLots: number(row.open_lots), kycStatus: text(row.kyc_status), riskState: text(row.risk_state, "Unknown"),
+      riskDetectionCount: number(row.risk_detection_count), financiallyEligible: row.financially_eligible === true || text(row.financially_eligible) === "true",
+      readyToRequest: row.ready_to_request === true || text(row.ready_to_request) === "true",
+      estimatedWithdrawable: number(row.estimated_withdrawable_profit_usd), primaryStatus: text(row.primary_status),
+      reasonCodes: text(row.reason_codes), affiliateId: text(row.current_affiliate_id), affiliateName: text(row.current_affiliate_name),
+      coverageKnown: row.coverage_known === true || text(row.coverage_known) === "true", coverageWarnings: text(row.coverage_warnings),
+    };
+  });
+  const runRow = withdrawableRunResult.rows[0] || {};
+  const withdrawableRun = {
+    runId: text(runRow.run_id), policyVersion: text(runRow.policy_version), status: text(runRow.status), completedAt: text(runRow.completed_at),
+    expectedAccounts: number(runRow.expected_account_count), resultAccounts: number(runRow.result_account_count), unknownAccounts: number(runRow.unknown_account_count),
+    financiallyEligibleAccounts: number(runRow.financially_eligible_count), readyAccounts: number(runRow.ready_account_count), pendingAccounts: number(runRow.pending_account_count),
+    knownWithdrawableProfit: number(runRow.known_withdrawable_profit_usd), pendingOverlap: number(runRow.pending_overlap_usd), error: text(runRow.error_message),
+  };
+  withdrawableAccounts.forEach((row) => {
+    const account = liveAccountById.get(row.accountId) || liveAccountByLogin.get(row.accountNr);
+    if (!account) return;
+    account.consistency = row.consistencyActual;
+    account.profitDays = row.tradingDaysActual;
+    account.payoutAccrued = row.estimatedWithdrawable;
+    account.eligibleNow = row.readyToRequest;
+    account.riskLevel = row.riskDetectionCount > 0 || !["", "normal", "clear", "none"].includes(row.riskState.toLowerCase()) ? "High" : "Normal";
+    account.riskReason = row.riskDetectionCount > 0
+      ? `${row.riskDetectionCount} live detector finding${row.riskDetectionCount === 1 ? "" : "s"}; state ${row.riskState}.`
+      : `Released risk state: ${row.riskState}.`;
+  });
+  const riskFindings = riskFindingsResult.rows.map((row) => {
+    const account = liveAccountByLogin.get(text(row.account_nr));
+    return {
+      id: text(row.breach_id), rule: text(row.rule), severity: text(row.severity, "Review"), accountNr: text(row.account_nr),
+      accountId: account?.id || "", customerId: text(row.customer_id, account?.customerId || ""),
+      customerName: account?.customerName || "Unknown customer", programme: account?.programme || text(row.plan, "Unknown"),
+      accountSize: account?.accountSize || 0, country: account?.country || "Unknown", channel: account?.channel || "Unknown",
+      symbol: text(row.symbol), findingAt: text(row.finding_at), evidence: text(row.evidence),
+    };
+  });
+
   const latestAffiliateRowDate = affiliates.map((row) => row.date).filter(Boolean).sort().at(-1) || "unknown";
   const latestAttributedAffiliateDate = affiliates.filter((row) => row.status === "attributed" && row.id !== "unattributed")
     .map((row) => row.date).filter(Boolean).sort().at(-1) || "unknown";
@@ -746,9 +871,11 @@ export async function buildSnapshot(serviceAccountJson: string) {
       affiliatesReady: !affiliateResult.error, customersReady: !customerResult.error,
       tradesReady: !tradeResult.error,
       marketingReady: !marketingChannelResult.error && !marketingCampaignResult.error && !marketingAttributionResult.error,
+      withdrawableReady: !withdrawableResult.error && !withdrawableRunResult.error,
+      riskFindingsReady: !riskFindingsResult.error,
       partial: queryErrors.length > 0,
       warnings: [
-        "Live canonical orders, attempt profitability, affiliates, customers, accounts, payouts, account trades and ThoughtMetric paid marketing are enabled.",
+        "Live canonical orders, attempt profitability, affiliates, customers, accounts, payouts, account trades, ThoughtMetric paid marketing, withdrawable profit and risk detector findings are enabled.",
         `Loaded ${orders.length} canonical orders (${eligibleOrders.length} revenue eligible), ${customers.length} commerce customers, ${accounts.length} current account records, ${payouts.length} payout records and ${tradeRows.length} account trade aggregates.`,
         `Latest canonical order date: ${maxOrderDate}; latest revenue-eligible order date: ${maxEligibleOrderDate}.`,
         `Latest affiliate-source order date: ${latestAffiliateRowDate}; latest attributed affiliate order date: ${latestAttributedAffiliateDate}.`,
@@ -756,7 +883,8 @@ export async function buildSnapshot(serviceAccountJson: string) {
         ...queryErrors,
       ],
     },
-    data: { accounts, payouts, orders, profitability, affiliates, customers, marketing },
+    data: { accounts, payouts, orders, profitability, affiliates, customers, marketing,
+      withdrawable: { accounts: withdrawableAccounts, run: withdrawableRun }, riskFindings },
   };
 }
 
