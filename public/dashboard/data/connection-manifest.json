@@ -28,6 +28,11 @@
       "state": "live",
       "sources": ["trader_scale.dim_commerce_customers", "trader_scale.bridge_commerce_customer_orders", "trader_scale.fct_commerce_orders"]
     },
+    "marketing": {
+      "label": "Paid marketing",
+      "state": "live",
+      "sources": ["trader_scale.rpt_thoughtmetric_channel_daily", "trader_scale.rpt_thoughtmetric_campaign_daily", "trader_scale.rpt_thoughtmetric_order_attribution", "trader_scale.rpt_paid_customer_ltv"]
+    },
     "risk": {
       "label": "Risk Radar",
       "state": "no_live_data",

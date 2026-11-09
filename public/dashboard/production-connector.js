@@ -9,7 +9,7 @@
   };
   var DATA_PAGES = new Set([
     'overview', 'revenue', 'accounts', 'pipeline', 'affiliates', 'competitors',
-    'pricing', 'rebuy', 'updates', 'ltv', 'client-profit', 'journey',
+    'pricing', 'marketing', 'rebuy', 'updates', 'ltv', 'client-profit', 'journey',
     'profitable-risk', 'risk-radar', 'payout-exposure', 'payout-consistency', 'reports', 'settings'
   ]);
 
@@ -251,8 +251,7 @@
       return { rejected: rejected, historyStart: source && source.historyStart || data.asOf, asOf: data.asOf,
         available: true, complete: false, illustrative: false, sourceNote: 'Live recorded rejection decisions.' };
     };
-    // ThoughtMetric is a separate source and is not part of the current warehouse snapshot.
-    window.BIThoughtMetricData = null;
+    window.BIThoughtMetricData = window.BIData.productionMarketing || null;
   }
 
   function applySnapshot(payload) {
@@ -268,6 +267,7 @@
     replaceArray(window.BIData.affiliates, adapted.affiliates);
     replaceArray(window.BIData.customers, adapted.customers);
     window.BIData.productionProfitability = Array.isArray(data.profitability) ? data.profitability.slice() : [];
+    window.BIData.productionMarketing = data.marketing && typeof data.marketing === 'object' ? data.marketing : null;
     rebuildLiveDimensions();
     installLiveCalculations();
     window.BIData.asOf = payload.asOf;
@@ -356,6 +356,8 @@
     (data.payouts || []).forEach(function (row) { if (isoDate(row.requestedAt)) values.push(isoDate(row.requestedAt)); });
     (data.profitability || []).forEach(function (row) { if (isoDate(row.date)) values.push(isoDate(row.date)); });
     (data.affiliates || []).forEach(function (row) { if (isoDate(row.date)) values.push(isoDate(row.date)); });
+    ((data.marketing && data.marketing.channels) || []).forEach(function (row) { if (isoDate(row.date)) values.push(isoDate(row.date)); });
+    ((data.marketing && data.marketing.campaigns) || []).forEach(function (row) { if (isoDate(row.date)) values.push(isoDate(row.date)); });
     values.sort();
     var fallback = state.snapshot && state.snapshot.asOf
       ? state.snapshot.asOf
@@ -631,7 +633,7 @@
       updates: 'Updates & impact', ltv: 'Customer lifetime value', 'client-profit': 'Client lifetime profit',
       journey: 'Customer journey', 'profitable-risk': 'High-risk clients in profit',
       'risk-radar': 'Risk radar', 'payout-exposure': 'Payout exposure patterns',
-      'payout-consistency': 'Consistency score distribution', reports: 'Reports'
+      'payout-consistency': 'Consistency score distribution', marketing: 'Paid marketing', reports: 'Reports'
     };
     return '<section class="no-live-data"><span class="no-live-icon">—</span><p class="no-live-kicker">LIVE SOURCE NOT CONNECTED</p>'
       + '<h2>No live data</h2><p>' + escapeHtml(labels[page] || 'This report')
@@ -710,7 +712,9 @@
       var unavailableContent = document.getElementById('page-content');
       if (unavailableContent && !unavailableContent.querySelector('.no-live-data')) unavailableContent.innerHTML = noLiveDataPage(page);
     }
-    var datedPages = new Set(['overview', 'revenue', 'accounts', 'pipeline', 'affiliates', 'competitors', 'pricing', 'rebuy', 'updates', 'ltv', 'client-profit', 'journey', 'profitable-risk', 'risk-radar', 'payout-exposure', 'payout-consistency', 'reports']);
+    var datedPages = new Set(['overview', 'revenue', 'accounts', 'pipeline', 'affiliates', 'competitors', 'pricing', 'marketing', 'rebuy', 'updates', 'ltv', 'client-profit', 'journey', 'profitable-risk', 'risk-radar', 'payout-exposure', 'payout-consistency', 'reports']);
+    var legacyFilters = document.getElementById('filters-row');
+    if (legacyFilters) legacyFilters.hidden = page === 'marketing';
     if (!datedPages.has(page)) return;
     dateControl.hidden = false;
     var key = state.dateAllTime + ':' + state.dateStart + ':' + state.dateEnd + ':' + state.datePickerOpen;

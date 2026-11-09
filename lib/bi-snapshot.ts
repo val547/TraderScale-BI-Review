@@ -455,6 +455,56 @@ FROM \`trader-scale-486213.trader_scale.dim_commerce_customers\`
 ORDER BY revenue_usd DESC
 `;
 
+const THOUGHTMETRIC_CHANNEL_SQL = `
+SELECT project_id, CAST(reporting_date AS STRING) AS reporting_date,
+  reporting_currency, reporting_timezone, model, channel, paid_channel,
+  native_spend, converted_spend, orders, total_sales, net_sales,
+  new_customer_orders, new_customer_total_sales, new_customers,
+  returning_customer_orders, returning_customer_total_sales, visits,
+  conversion_rate, attribution_loaded_at, delivery_loaded_at
+FROM \`trader-scale-486213.trader_scale.rpt_thoughtmetric_channel_daily\`
+WHERE UPPER(COALESCE(reporting_currency, 'USD')) = 'USD'
+ORDER BY reporting_date DESC, channel
+`;
+
+const THOUGHTMETRIC_CAMPAIGN_SQL = `
+SELECT project_id, CAST(reporting_date AS STRING) AS reporting_date,
+  reporting_currency, reporting_timezone, model, campaign_scope, account_id,
+  platform, paid_platform, campaign_id, campaign_name,
+  native_spend, converted_spend, impressions, clicks, ctr, cpc, cpm,
+  visits, total_duration, total_pageviews, avg_duration, avg_pageviews,
+  orders, add_to_carts, leads, gross_sales, total_discounts, total_refund,
+  total_sales, net_sales, total_shipping, total_tax, net_profit,
+  item_quantity, aov, conversion_rate, new_customer_orders,
+  new_customer_total_sales, returning_customer_orders,
+  returning_customer_total_sales, attribution_loaded_at, delivery_loaded_at
+FROM \`trader-scale-486213.trader_scale.rpt_thoughtmetric_campaign_daily\`
+WHERE UPPER(COALESCE(reporting_currency, 'USD')) = 'USD'
+ORDER BY reporting_date DESC, converted_spend DESC
+`;
+
+const THOUGHTMETRIC_ATTRIBUTION_SQL = `
+SELECT CAST(conversion_date AS STRING) AS conversion_date, model, channel,
+  paid_channel, SUM(COALESCE(channel_credit, 0)) AS conversion_credit,
+  SUM(COALESCE(thoughtmetric_order_revenue, 0) * COALESCE(channel_credit, 0)) AS attributed_revenue,
+  SUM(COALESCE(actual_matched_revenue, 0) * COALESCE(channel_credit, 0)) AS canonical_matched_revenue,
+  COUNT(DISTINCT transaction_id) AS attributed_orders,
+  COUNT(DISTINCT IF(warehouse_matched, transaction_id, NULL)) AS matched_orders,
+  COUNT(DISTINCT IF(is_new_customer, customer_id, NULL)) AS new_customers
+FROM \`trader-scale-486213.trader_scale.rpt_thoughtmetric_order_attribution\`
+GROUP BY conversion_date, model, channel, paid_channel
+ORDER BY conversion_date DESC, channel
+`;
+
+const THOUGHTMETRIC_LTV_SQL = `
+SELECT project_id, model, channel, paid_channel,
+  CAST(acquisition_date AS STRING) AS acquisition_date, acquisition_order_id,
+  customer_id, acquisition_credit, initial_revenue, repeat_revenue,
+  total_customer_ltv
+FROM \`trader-scale-486213.trader_scale.rpt_paid_customer_ltv\`
+ORDER BY acquisition_date DESC
+`;
+
 export async function buildSnapshot(serviceAccountJson: string) {
   if (!serviceAccountJson) throw new Error("BigQuery secret is not configured.");
   const credential = JSON.parse(serviceAccountJson) as ServiceAccount;
@@ -464,12 +514,17 @@ export async function buildSnapshot(serviceAccountJson: string) {
     query(credential, token, ACCOUNTS_SQL),
     query(credential, token, PAYOUTS_SQL),
   ]);
-  const [orderResult, profitabilityResult, affiliateResult, customerResult, tradeResult] = await Promise.all([
+  const [orderResult, profitabilityResult, affiliateResult, customerResult, tradeResult,
+    marketingChannelResult, marketingCampaignResult, marketingAttributionResult, marketingLtvResult] = await Promise.all([
     optionalQuery(credential, token, "Canonical orders", ORDERS_SQL),
     optionalQuery(credential, token, "Attempt profitability", PROFITABILITY_SQL),
     optionalQuery(credential, token, "Affiliate attribution", AFFILIATES_SQL),
     optionalQuery(credential, token, "Commerce customers", CUSTOMERS_SQL),
     optionalQuery(credential, token, "Account trade history", TRADES_SQL),
+    optionalQuery(credential, token, "ThoughtMetric channels", THOUGHTMETRIC_CHANNEL_SQL),
+    optionalQuery(credential, token, "ThoughtMetric campaigns", THOUGHTMETRIC_CAMPAIGN_SQL),
+    optionalQuery(credential, token, "ThoughtMetric attribution", THOUGHTMETRIC_ATTRIBUTION_SQL),
+    optionalQuery(credential, token, "ThoughtMetric customer LTV", THOUGHTMETRIC_LTV_SQL),
   ]);
   const orderRows = orderResult.rows;
   const profitabilityRows = profitabilityResult.rows;
@@ -477,7 +532,8 @@ export async function buildSnapshot(serviceAccountJson: string) {
   const customerRows = customerResult.rows;
   const tradeRows = tradeResult.rows;
   const tradeByAccount = new Map(tradeRows.map((row) => [text(row.account_id), row]));
-  const queryErrors = [orderResult.error, profitabilityResult.error, affiliateResult.error, customerResult.error, tradeResult.error].filter(Boolean);
+  const queryErrors = [orderResult.error, profitabilityResult.error, affiliateResult.error, customerResult.error, tradeResult.error,
+    marketingChannelResult.error, marketingCampaignResult.error, marketingAttributionResult.error, marketingLtvResult.error].filter(Boolean);
 
   const accounts = accountRows.map((row) => {
     const trade = tradeByAccount.get(text(row.account_id));
@@ -589,6 +645,95 @@ export async function buildSnapshot(serviceAccountJson: string) {
     kycVerified: row.kyc_verified === true || text(row.kyc_verified) === "true",
   }));
 
+  const marketingModels = Array.from(new Set([
+    ...marketingChannelResult.rows, ...marketingCampaignResult.rows,
+    ...marketingAttributionResult.rows, ...marketingLtvResult.rows,
+  ].map((row) => text(row.model).trim()).filter(Boolean)));
+  const marketingModel = marketingModels.find((value) => /^mixed$/i.test(value))
+    || marketingModels.find((value) => /mixed|multi|fraction/i.test(value))
+    || marketingModels[0] || "mixed";
+  const selectedMarketingRows = <T extends Record<string, unknown>>(rows: T[]) => rows.filter((row) => text(row.model) === marketingModel);
+  const attributionRows = selectedMarketingRows(marketingAttributionResult.rows).map((row) => ({
+    date: date(row.conversion_date), model: text(row.model), channel: text(row.channel, "Unknown"),
+    paidChannel: text(row.paid_channel, "other"), conversionCredit: number(row.conversion_credit),
+    attributedRevenue: number(row.attributed_revenue), canonicalMatchedRevenue: number(row.canonical_matched_revenue),
+    attributedOrders: number(row.attributed_orders), matchedOrders: number(row.matched_orders),
+    newCustomers: number(row.new_customers),
+  }));
+  const attributionByDateChannel = new Map<string, typeof attributionRows[number]>();
+  attributionRows.forEach((row) => {
+    const key = `${row.date}|${row.channel}`;
+    const current = attributionByDateChannel.get(key);
+    attributionByDateChannel.set(key, current ? {
+      ...current,
+      conversionCredit: current.conversionCredit + row.conversionCredit,
+      attributedRevenue: current.attributedRevenue + row.attributedRevenue,
+      canonicalMatchedRevenue: current.canonicalMatchedRevenue + row.canonicalMatchedRevenue,
+      attributedOrders: current.attributedOrders + row.attributedOrders,
+      matchedOrders: current.matchedOrders + row.matchedOrders,
+      newCustomers: current.newCustomers + row.newCustomers,
+    } : row);
+  });
+  const marketingChannels = selectedMarketingRows(marketingChannelResult.rows).map((row) => {
+    const actual = attributionByDateChannel.get(`${date(row.reporting_date)}|${text(row.channel, "Unknown")}`);
+    const spend = number(row.converted_spend);
+    const conversions = number(row.orders);
+    const newCustomers = number(row.new_customers);
+    const revenue = actual ? actual.canonicalMatchedRevenue : 0;
+    return {
+      projectId: text(row.project_id), date: date(row.reporting_date), currency: text(row.reporting_currency, "USD"),
+      timezone: text(row.reporting_timezone), model: text(row.model), channel: text(row.channel, "Unknown"),
+      paidChannel: text(row.paid_channel, "other"), nativeSpend: optionalNumber(row.native_spend), spend,
+      conversions, newCustomers, vendorNewCustomerOrders: number(row.new_customer_orders),
+      vendorRevenue: number(row.net_sales), canonicalMatchedRevenue: revenue,
+      visits: number(row.visits), conversionRate: optionalNumber(row.conversion_rate),
+      roas: spend ? revenue / spend : null, cpa: spend && conversions ? spend / conversions : null,
+      ncac: spend && newCustomers ? spend / newCustomers : null,
+      attributionLoadedAt: text(row.attribution_loaded_at), deliveryLoadedAt: text(row.delivery_loaded_at),
+      matchedOrders: actual ? actual.matchedOrders : 0, attributedOrders: actual ? actual.attributedOrders : 0,
+    };
+  });
+  const marketingCampaigns = selectedMarketingRows(marketingCampaignResult.rows).map((row) => {
+    const spend = number(row.converted_spend), leads = number(row.leads), conversions = number(row.orders);
+    const vendorRevenue = number(row.net_sales), newCustomerOrders = number(row.new_customer_orders);
+    return {
+      projectId: text(row.project_id), date: date(row.reporting_date), currency: text(row.reporting_currency, "USD"),
+      timezone: text(row.reporting_timezone), model: text(row.model), campaignScope: text(row.campaign_scope),
+      accountId: text(row.account_id), platform: text(row.platform, "unknown"), paidPlatform: text(row.paid_platform, "other"),
+      campaignId: text(row.campaign_id), campaignName: text(row.campaign_name, "Unnamed campaign"),
+      nativeSpend: optionalNumber(row.native_spend), spend, impressions: number(row.impressions), clicks: number(row.clicks),
+      ctr: optionalNumber(row.ctr), cpc: optionalNumber(row.cpc), cpm: optionalNumber(row.cpm), visits: number(row.visits),
+      totalDuration: number(row.total_duration), totalPageviews: number(row.total_pageviews),
+      averageDuration: optionalNumber(row.avg_duration), averagePageviews: optionalNumber(row.avg_pageviews),
+      conversions, addToCarts: number(row.add_to_carts), leads, cpl: spend && leads ? spend / leads : null,
+      grossSales: number(row.gross_sales), discounts: number(row.total_discounts), refunds: number(row.total_refund),
+      totalSales: number(row.total_sales), vendorRevenue, shipping: number(row.total_shipping), tax: number(row.total_tax),
+      netProfit: number(row.net_profit), itemsSold: number(row.item_quantity), averageOrderValue: optionalNumber(row.aov),
+      conversionRate: optionalNumber(row.conversion_rate), newCustomerOrders,
+      newCustomerRevenue: number(row.new_customer_total_sales), returningCustomerOrders: number(row.returning_customer_orders),
+      returningCustomerRevenue: number(row.returning_customer_total_sales),
+      cpa: spend && conversions ? spend / conversions : null,
+      ncac: spend && newCustomerOrders ? spend / newCustomerOrders : null,
+      vendorRoas: spend ? vendorRevenue / spend : null,
+      attributionLoadedAt: text(row.attribution_loaded_at), deliveryLoadedAt: text(row.delivery_loaded_at),
+    };
+  });
+  const marketingLtv = selectedMarketingRows(marketingLtvResult.rows).map((row) => ({
+    projectId: text(row.project_id), model: text(row.model), channel: text(row.channel, "Unknown"),
+    paidChannel: text(row.paid_channel, "other"), acquisitionDate: date(row.acquisition_date),
+    acquisitionOrderId: text(row.acquisition_order_id), customerId: text(row.customer_id),
+    acquisitionCredit: number(row.acquisition_credit), initialRevenue: number(row.initial_revenue),
+    repeatRevenue: number(row.repeat_revenue), totalCustomerLtv: number(row.total_customer_ltv),
+  }));
+  const marketingDates = marketingChannels.map((row) => row.date).filter(Boolean).sort();
+  const marketing = {
+    provider: "ThoughtMetric", model: marketingModel, availableModels: marketingModels,
+    currency: "USD", revenueBasis: "Canonical matched revenue",
+    coverageStart: marketingDates[0] || "", coverageEnd: marketingDates.at(-1) || "",
+    channels: marketingChannels, campaigns: marketingCampaigns,
+    attribution: attributionRows, customerLtv: marketingLtv,
+  };
+
   const latestAffiliateRowDate = affiliates.map((row) => row.date).filter(Boolean).sort().at(-1) || "unknown";
   const latestAttributedAffiliateDate = affiliates.filter((row) => row.status === "attributed" && row.id !== "unattributed")
     .map((row) => row.date).filter(Boolean).sort().at(-1) || "unknown";
@@ -600,9 +745,10 @@ export async function buildSnapshot(serviceAccountJson: string) {
       profitabilityReady: !profitabilityResult.error, revenueReady: !orderResult.error,
       affiliatesReady: !affiliateResult.error, customersReady: !customerResult.error,
       tradesReady: !tradeResult.error,
+      marketingReady: !marketingChannelResult.error && !marketingCampaignResult.error && !marketingAttributionResult.error,
       partial: queryErrors.length > 0,
       warnings: [
-        "Live canonical orders, attempt profitability, affiliates, customers, accounts, payouts and account trade aggregates are enabled.",
+        "Live canonical orders, attempt profitability, affiliates, customers, accounts, payouts, account trades and ThoughtMetric paid marketing are enabled.",
         `Loaded ${orders.length} canonical orders (${eligibleOrders.length} revenue eligible), ${customers.length} commerce customers, ${accounts.length} current account records, ${payouts.length} payout records and ${tradeRows.length} account trade aggregates.`,
         `Latest canonical order date: ${maxOrderDate}; latest revenue-eligible order date: ${maxEligibleOrderDate}.`,
         `Latest affiliate-source order date: ${latestAffiliateRowDate}; latest attributed affiliate order date: ${latestAttributedAffiliateDate}.`,
@@ -610,7 +756,7 @@ export async function buildSnapshot(serviceAccountJson: string) {
         ...queryErrors,
       ],
     },
-    data: { accounts, payouts, orders, profitability, affiliates, customers },
+    data: { accounts, payouts, orders, profitability, affiliates, customers, marketing },
   };
 }
 
