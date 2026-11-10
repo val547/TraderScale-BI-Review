@@ -255,7 +255,8 @@ WITH latest_accounts AS (
   SELECT account_id, first_trade_date,
     SAFE_CAST(total_trades AS INT64) AS total_trades,
     SAFE_CAST(win_rate AS FLOAT64) AS win_rate,
-    SAFE_CAST(net_profit AS NUMERIC) AS net_profit
+    SAFE_CAST(net_profit AS NUMERIC) AS net_profit,
+    SAFE_CAST(consistency_top_day_profit_percentage AS FLOAT64) AS consistency_percentage
   FROM \`trader-scale-486213.trader_scale.fct_account_analytics\`
   QUALIFY ROW_NUMBER() OVER (
     PARTITION BY account_id ORDER BY etl_updated_at DESC, etl_loaded_at DESC
@@ -287,7 +288,7 @@ SELECT a.account_id, CAST(a.account_nr AS STRING) AS account_login,
   d.currency, d.profit_share_percentage,
   IF(d.fetched_at > a.core_clock, COALESCE(d.current_balance, a.current_balance), a.current_balance) AS current_balance,
   IF(d.fetched_at > a.core_clock, COALESCE(d.current_equity, a.current_equity), a.current_equity) AS current_equity,
-  a.profit, x.first_trade_date, x.total_trades, x.win_rate, x.net_profit,
+  a.profit, x.first_trade_date, x.total_trades, x.win_rate, x.net_profit, x.consistency_percentage,
   IF(d.fetched_at > a.core_clock, d.breached_at, a.breached_at) AS breached_at,
   a.created_at, a.updated_at,
   GREATEST(a.core_clock, COALESCE(d.fetched_at, TIMESTAMP '1970-01-01')) AS snapshot_at,
@@ -332,8 +333,16 @@ WITH latest_payouts AS (
   QUALIFY ROW_NUMBER() OVER (
     PARTITION BY account_id ORDER BY fetched_at DESC, updated_at DESC, created_at DESC
   ) = 1
+), commerce_customers AS (
+  SELECT warehouse_customer_id, commerce_customer_key
+  FROM \`trader-scale-486213.trader_scale.dim_commerce_customers\`
+  WHERE warehouse_customer_id IS NOT NULL
+  QUALIFY ROW_NUMBER() OVER (
+    PARTITION BY warehouse_customer_id ORDER BY refreshed_at DESC, updated_at DESC
+  ) = 1
 )
 SELECT p.payout_id, p.payout_nr, p.customer_id,
+  COALESCE(cc.commerce_customer_key, p.customer_id) AS commerce_customer_key,
   c.full_name AS customer_name, c.country, p.account_id,
   CAST(p.account_num AS STRING) AS account_login, p.status,
   p.request_amount, p.share_amount, p.account_currency,
@@ -344,6 +353,7 @@ FROM latest_payouts AS p
 LEFT JOIN latest_customers AS c USING (customer_id)
 LEFT JOIN latest_accounts AS a USING (account_id)
 LEFT JOIN latest_details AS d USING (account_id)
+LEFT JOIN commerce_customers AS cc ON cc.warehouse_customer_id = p.customer_id
 ORDER BY p.created_at DESC
 `;
 
@@ -730,7 +740,7 @@ export async function buildSnapshot(serviceAccountJson: string) {
       tradeNetRealized: trade ? number(trade.net_realized) : null,
       firstClosedTradeAt: trade ? date(trade.first_closed_trade_at) : "",
       lastClosedTradeAt: trade ? date(trade.last_closed_trade_at) : "",
-      tradeHistoryAvailable: Boolean(trade), consistency: null as number | null, profitDays: null as number | null,
+      tradeHistoryAvailable: Boolean(trade), consistency: optionalNumber(row.consistency_percentage), profitDays: null as number | null,
       challengeFormat: challengeFormat(row), phase: challengePhase(row, stage), snapshotAt: date(row.snapshot_at),
       daysSinceOpen: Math.max(0, Math.floor((Date.now() - Date.parse(`${date(row.created_at)}T00:00:00Z`)) / 86400000)),
       demoRules: false,
@@ -742,7 +752,7 @@ export async function buildSnapshot(serviceAccountJson: string) {
     const approvedAt = ["Approved", "Paid"].includes(status) ? date(row.approved_at) : "";
     const rejectedAt = status === "Rejected" ? date(row.updated_at) : "";
     return {
-      id: text(row.payout_id, text(row.payout_nr)), customerId: text(row.customer_id),
+      id: text(row.payout_id, text(row.payout_nr)), customerId: text(row.commerce_customer_key, text(row.customer_id)),
       customerName: text(row.customer_name, "Unknown customer"), account: text(row.account_login),
       accountId: text(row.account_id),
       programme: productPlan({ plan: row.account_plan, plan_category_name: row.account_plan_category_name, platform: row.platform }, row.start_balance),
@@ -1008,7 +1018,7 @@ export async function buildSnapshot(serviceAccountJson: string) {
       affiliatePnlReady: !affiliatePnlResult.error, customersReady: !customerResult.error,
       tradesReady: !tradeResult.error,
       marketingReady: !marketingChannelResult.error && !marketingCampaignResult.error && !marketingAttributionResult.error,
-      withdrawableReady: !withdrawableResult.error && !withdrawableRunResult.error,
+      withdrawableReady: !withdrawableResult.error,
       riskFindingsReady: !riskFindingsResult.error,
       journeyReady: !customerResult.error,
       rebuyReady: !rebuyResult.error,

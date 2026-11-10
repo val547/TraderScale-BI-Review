@@ -69,10 +69,15 @@
     var pnlByOrder = {};
     (data.affiliatePnl || []).forEach(function (row) {
       var key = String(row.storeId) + ':' + String(row.orderId);
-      if (!pnlByOrder[key]) pnlByOrder[key] = { commission: 0, commissionRows: 0, complete: true };
-      if (row.componentType === 'commission' && row.allocationBucket === 'attributed') {
+      if (!pnlByOrder[key]) pnlByOrder[key] = { commission: 0, payout: 0, revenueRows: 0, commissionRows: 0, payoutRows: 0, complete: true };
+      if (row.componentType === 'revenue') pnlByOrder[key].revenueRows += 1;
+      if (row.componentType === 'commission') {
         pnlByOrder[key].commission += Number(row.amount) || 0;
         pnlByOrder[key].commissionRows += 1;
+      }
+      if (row.componentType === 'payout') {
+        pnlByOrder[key].payout += Number(row.amount) || 0;
+        pnlByOrder[key].payoutRows += 1;
       }
       if (row.amountKnown === false) pnlByOrder[key].complete = false;
     });
@@ -118,10 +123,11 @@
         channel: affiliateId ? 'Affiliate' : 'Unknown', affiliateId: affiliateId,
         affiliateTrafficType: affiliateId ? 'fast-track' : null,
         grossSales: Number(row.grossRevenue) || 0, discount: 0, refund: Number(row.refunded) || 0,
-        chargeback: 0, pspFee: null, platformCost: null, acquisitionCost: null,
-        commission: affiliateId && pnl && pnl.complete ? pnl.commission : affiliateId ? null : 0,
-        payoutCost: null, netSales: Number(row.netRevenue) || 0,
-        contribution: null, isNewCustomer: !!row.isNewCustomer, liveCostCoverage: false
+        chargeback: 0, pspFee: 0, platformCost: 0, acquisitionCost: 0,
+        commission: pnl ? pnl.commission : null,
+        payoutCost: pnl ? pnl.payout : null, netSales: Number(row.netRevenue) || 0,
+        contribution: pnl && pnl.revenueRows ? (Number(row.netRevenue) || 0) - pnl.commission - pnl.payout : null,
+        isNewCustomer: !!row.isNewCustomer, liveCostCoverage: !!(pnl && pnl.revenueRows), partialCostCoverage: !!(pnl && !pnl.complete)
       };
     });
 
@@ -417,6 +423,7 @@
     ((data.marketing && data.marketing.campaigns) || []).forEach(function (row) { if (isoDate(row.date)) values.push(isoDate(row.date)); });
     (data.customers || []).forEach(function (row) { if (isoDate(row.registeredAt)) values.push(isoDate(row.registeredAt)); });
     (data.rebuy || []).forEach(function (row) { if (isoDate(row.breachedAt)) values.push(isoDate(row.breachedAt)); });
+    (data.riskFindings || []).forEach(function (row) { if (isoDate(row.findingAt)) values.push(isoDate(row.findingAt)); });
     values.sort();
     var fallback = state.snapshot && state.snapshot.asOf
       ? state.snapshot.asOf
@@ -847,7 +854,7 @@
     }
     var legacyFilters = document.getElementById('filters-row');
     if (legacyFilters) legacyFilters.hidden = page === 'marketing' || page === 'journey';
-    var currentOnlyPages = new Set(['profitable-risk', 'risk-radar', 'payout-exposure', 'payout-consistency']);
+    var currentOnlyPages = new Set(['profitable-risk', 'payout-exposure', 'payout-consistency']);
     if (currentOnlyPages.has(page)) {
       dateControl.hidden = false;
       dateControl.innerHTML = '<div class="current-release-control"><small>CURRENT RELEASED SNAPSHOT</small><strong>'
@@ -855,7 +862,7 @@
       dateControl.setAttribute('data-live-date-view', 'current-release:' + page);
       return;
     }
-    var datedPages = new Set(['overview', 'revenue', 'accounts', 'pipeline', 'affiliates', 'competitors', 'pricing', 'marketing', 'rebuy', 'updates', 'ltv', 'client-profit', 'journey', 'reports']);
+    var datedPages = new Set(['overview', 'revenue', 'accounts', 'pipeline', 'affiliates', 'competitors', 'pricing', 'marketing', 'rebuy', 'updates', 'ltv', 'client-profit', 'journey', 'risk-radar', 'reports']);
     if (!datedPages.has(page)) return;
     dateControl.hidden = false;
     var key = state.dateAllTime + ':' + state.dateStart + ':' + state.dateEnd + ':' + state.datePickerOpen;
@@ -867,7 +874,7 @@
   function sanitizeProductionCopy() {
     if (state.mode !== 'production') return;
     var periodContext = document.querySelector('.filter-tail .period-context');
-    if (periodContext) periodContext.textContent = ['profitable-risk', 'risk-radar', 'payout-exposure', 'payout-consistency'].includes(currentPage())
+    if (periodContext) periodContext.textContent = ['profitable-risk', 'payout-exposure', 'payout-consistency'].includes(currentPage())
       ? 'Current released snapshot · global dimensions apply'
       : dateLabel() + ' · UTC';
     var replacements = [
@@ -951,7 +958,8 @@
       if (channelFooter) channelFooter.textContent = 'Live source not connected';
     }
     var profitCard = root.querySelector('.ov-value-card[data-id="profit"]');
-    if (profitCard) {
+    var ltvProfitReady = state.snapshot && state.snapshot.quality && state.snapshot.quality.affiliatePnlReady;
+    if (profitCard && !ltvProfitReady) {
       var profitValue = profitCard.querySelector('strong');
       var profitChange = profitCard.querySelector('.ov-metric-change');
       var profitBaseline = profitCard.querySelector('.ov-metric-baseline');
