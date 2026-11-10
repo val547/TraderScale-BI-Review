@@ -447,6 +447,27 @@ LEFT JOIN \`trader-scale-486213.trader_scale.fct_affiliate_order_attribution\` A
 ORDER BY o.order_reporting_date DESC, net_revenue DESC
 `;
 
+const AFFILIATE_PNL_SQL = `
+WITH primary_product AS (
+  SELECT store_id, order_id,
+    ARRAY_AGG(product_name IGNORE NULLS ORDER BY ABS(COALESCE(total_usd, 0)) DESC, line_id LIMIT 1)[SAFE_OFFSET(0)] AS product_name
+  FROM \`trader-scale-486213.trader_scale.fct_commerce_order_lines\`
+  GROUP BY store_id, order_id
+), order_dimensions AS (
+  SELECT store_id, order_id, billing_country
+  FROM \`trader-scale-486213.trader_scale.fct_commerce_orders\`
+)
+SELECT c.reporting_date, c.component_type, c.allocation_bucket,
+  c.store_id, c.order_id, c.affiliate_id, c.affiliate_name,
+  c.customer_id, c.customer_type, c.amount_usd, c.recognized_amount_usd,
+  c.amount_known, c.completeness_status,
+  p.product_name, o.billing_country
+FROM \`trader-scale-486213.trader_scale.rpt_affiliate_pnl_components\` AS c
+LEFT JOIN primary_product AS p USING (store_id, order_id)
+LEFT JOIN order_dimensions AS o USING (store_id, order_id)
+ORDER BY c.reporting_date DESC, c.affiliate_id, c.store_id, c.order_id
+`;
+
 const CUSTOMERS_SQL = `
 WITH latest_axcera AS (
   SELECT customer_id, created_at
@@ -646,12 +667,13 @@ export async function buildSnapshot(serviceAccountJson: string) {
     query(credential, token, ACCOUNTS_SQL),
     query(credential, token, PAYOUTS_SQL),
   ]);
-  const [orderResult, profitabilityResult, affiliateResult, customerResult, tradeResult,
+  const [orderResult, profitabilityResult, affiliateResult, affiliatePnlResult, customerResult, tradeResult,
     marketingChannelResult, marketingCampaignResult, marketingAttributionResult, marketingLtvResult,
     withdrawableResult, withdrawableRunResult, riskFindingsResult, rebuyResult] = await Promise.all([
     optionalQuery(credential, token, "Canonical orders", ORDERS_SQL),
     optionalQuery(credential, token, "Attempt profitability", PROFITABILITY_SQL),
     optionalQuery(credential, token, "Affiliate attribution", AFFILIATES_SQL),
+    optionalQuery(credential, token, "Released affiliate P&L", AFFILIATE_PNL_SQL),
     optionalQuery(credential, token, "Commerce customers", CUSTOMERS_SQL),
     optionalQuery(credential, token, "Account trade history", TRADES_SQL),
     optionalQuery(credential, token, "ThoughtMetric channels", THOUGHTMETRIC_CHANNEL_SQL),
@@ -666,10 +688,11 @@ export async function buildSnapshot(serviceAccountJson: string) {
   const orderRows = orderResult.rows;
   const profitabilityRows = profitabilityResult.rows;
   const affiliateRows = affiliateResult.rows;
+  const affiliatePnlRows = affiliatePnlResult.rows;
   const customerRows = customerResult.rows;
   const tradeRows = tradeResult.rows;
   const tradeByAccount = new Map(tradeRows.map((row) => [text(row.account_id), row]));
-  const queryErrors = [orderResult.error, profitabilityResult.error, affiliateResult.error, customerResult.error, tradeResult.error,
+  const queryErrors = [orderResult.error, profitabilityResult.error, affiliateResult.error, affiliatePnlResult.error, customerResult.error, tradeResult.error,
     marketingChannelResult.error, marketingCampaignResult.error, marketingAttributionResult.error, marketingLtvResult.error,
     withdrawableResult.error, withdrawableRunResult.error, riskFindingsResult.error, rebuyResult.error].filter(Boolean);
 
@@ -772,6 +795,25 @@ export async function buildSnapshot(serviceAccountJson: string) {
     grossRevenue: number(row.gross_revenue), netRevenue: number(row.net_revenue),
     hasConflict: row.has_conflict === true || text(row.has_conflict) === "true",
   }));
+
+  const affiliatePnl = affiliatePnlRows.map((row) => {
+    const componentType = text(row.component_type).trim().toLowerCase();
+    const productName = text(row.product_name);
+    return {
+      date: date(row.reporting_date), componentType, allocationBucket: text(row.allocation_bucket).trim().toLowerCase(),
+      storeId: text(row.store_id), orderId: text(row.order_id),
+      affiliateId: text(row.affiliate_id).trim(), affiliateName: text(row.affiliate_name).trim(),
+      customerId: text(row.customer_id), customerType: text(row.customer_type).trim().toLowerCase(),
+      amount: componentType === "commission" ? number(row.recognized_amount_usd) : number(row.amount_usd),
+      amountKnown: row.amount_known === true || text(row.amount_known) === "true",
+      completenessStatus: text(row.completeness_status),
+      productName, programme: productName ? productPlan({ plan: productName }) : "Unknown",
+      programmeFamily: productName ? programmeFamily({ plan: productName }) : "Unknown",
+      platform: productName ? platform({ plan: productName }) : "",
+      accountSize: productName ? productSize({ plan: productName }) : 0,
+      country: text(row.billing_country, "Unknown"),
+    };
+  });
 
   const customers = customerRows.map((row) => ({
     id: text(row.commerce_customer_key), name: text(row.full_name, "No live data"),
@@ -959,8 +1001,9 @@ export async function buildSnapshot(serviceAccountJson: string) {
     schemaVersion: 1, mode: "production",
     asOf: new Date().toISOString().slice(0, 10), currency: "USD",
     quality: {
-      profitabilityReady: !profitabilityResult.error, revenueReady: !orderResult.error,
-      affiliatesReady: !affiliateResult.error, customersReady: !customerResult.error,
+      profitabilityReady: !affiliatePnlResult.error || !profitabilityResult.error, revenueReady: !orderResult.error,
+      affiliatesReady: !affiliateResult.error && !affiliatePnlResult.error,
+      affiliatePnlReady: !affiliatePnlResult.error, customersReady: !customerResult.error,
       tradesReady: !tradeResult.error,
       marketingReady: !marketingChannelResult.error && !marketingCampaignResult.error && !marketingAttributionResult.error,
       withdrawableReady: !withdrawableResult.error && !withdrawableRunResult.error,
@@ -973,11 +1016,12 @@ export async function buildSnapshot(serviceAccountJson: string) {
         `Loaded ${orders.length} canonical orders (${eligibleOrders.length} revenue eligible), ${customers.length} commerce customers, ${accounts.length} current account records, ${payouts.length} payout records and ${tradeRows.length} account trade aggregates.`,
         `Latest canonical order date: ${maxOrderDate}; latest revenue-eligible order date: ${maxEligibleOrderDate}.`,
         `Latest affiliate-source order date: ${latestAffiliateRowDate}; latest attributed affiliate order date: ${latestAttributedAffiliateDate}.`,
+        `Loaded ${affiliatePnl.length} released Affiliate P&L component rows using accrued commission recognition.`,
         "Pricing and business-change screens remain unavailable because no complete approved production contracts exist.",
         ...queryErrors,
       ],
     },
-    data: { accounts, payouts, orders, profitability, affiliates, customers, marketing,
+    data: { accounts, payouts, orders, profitability, affiliates, affiliatePnl, customers, marketing,
       withdrawable: { accounts: withdrawableAccounts, run: withdrawableRun }, riskFindings, rebuy },
   };
 }

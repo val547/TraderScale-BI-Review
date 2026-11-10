@@ -66,13 +66,30 @@
     (data.customers || []).forEach(function (row) { customerProfiles[String(row.id)] = row; });
     var attributionByOrder = {};
     (data.affiliates || []).forEach(function (row) { attributionByOrder[String(row.storeId) + ':' + String(row.orderId)] = row; });
+    var pnlByOrder = {};
+    (data.affiliatePnl || []).forEach(function (row) {
+      var key = String(row.storeId) + ':' + String(row.orderId);
+      if (!pnlByOrder[key]) pnlByOrder[key] = { commission: 0, commissionRows: 0, complete: true };
+      if (row.componentType === 'commission' && row.allocationBucket === 'attributed') {
+        pnlByOrder[key].commission += Number(row.amount) || 0;
+        pnlByOrder[key].commissionRows += 1;
+      }
+      if (row.amountKnown === false) pnlByOrder[key].complete = false;
+    });
 
     var affiliateProfiles = {};
     (data.affiliates || []).forEach(function (row) {
       if (!row.id || row.id === 'unattributed' || row.status !== 'attributed') return;
       if (!affiliateProfiles[row.id]) affiliateProfiles[row.id] = {
         id: row.id, name: row.name, initials: initials(row.name), country: 'Unknown',
-        retainer: null, commissionRate: null, trafficType: 'unrecorded', trafficTypeLabel: 'Type not recorded'
+        retainer: null, commissionRate: null, trafficType: 'fast-track', trafficTypeLabel: 'Fast Track'
+      };
+    });
+    (data.affiliatePnl || []).forEach(function (row) {
+      if (row.allocationBucket !== 'attributed' || !row.affiliateId) return;
+      if (!affiliateProfiles[row.affiliateId]) affiliateProfiles[row.affiliateId] = {
+        id: row.affiliateId, name: row.affiliateName || row.affiliateId, initials: initials(row.affiliateName || row.affiliateId), country: 'Unknown',
+        retainer: null, commissionRate: null, trafficType: 'fast-track', trafficTypeLabel: 'Fast Track'
       };
     });
 
@@ -83,6 +100,7 @@
         : null;
       var profile = customerProfiles[row.customerId] || {};
       var affiliateId = attribution && attribution.status === 'attributed' ? attribution.id : null;
+      var pnl = pnlByOrder[row.id] || null;
       if (account) {
         account.orderId = row.id;
         account.channel = affiliateId ? 'Affiliate' : 'Unknown';
@@ -98,10 +116,11 @@
         accountSize: Number(row.accountSize) || (account ? account.accountSize : 0),
         accountId: account ? account.id : '', country: row.country || profile.country || 'Unknown',
         channel: affiliateId ? 'Affiliate' : 'Unknown', affiliateId: affiliateId,
-        affiliateTrafficType: affiliateId ? 'unrecorded' : null,
+        affiliateTrafficType: affiliateId ? 'fast-track' : null,
         grossSales: Number(row.grossRevenue) || 0, discount: 0, refund: Number(row.refunded) || 0,
         chargeback: 0, pspFee: null, platformCost: null, acquisitionCost: null,
-        commission: null, payoutCost: null, netSales: Number(row.netRevenue) || 0,
+        commission: affiliateId && pnl && pnl.complete ? pnl.commission : affiliateId ? null : 0,
+        payoutCost: null, netSales: Number(row.netRevenue) || 0,
         contribution: null, isNewCustomer: !!row.isNewCustomer, liveCostCoverage: false
       };
     });
@@ -126,7 +145,7 @@
         orderCount: row.completedOrderCount, kycVerified: row.kycVerified
       });
     });
-    return { orders: orders, customers: customers, affiliates: Object.keys(affiliateProfiles).map(function (key) { return affiliateProfiles[key]; }) };
+    return { orders: orders, customers: customers, affiliates: Object.keys(affiliateProfiles).map(function (key) { return affiliateProfiles[key]; }), affiliatePnl: data.affiliatePnl || [] };
   }
 
   function installLiveCalculations() {
@@ -142,6 +161,15 @@
       });
     }
     function total(rows, field) { return rows.reduce(function (value, row) { return value + (Number(row[field]) || 0); }, 0); }
+    function selectedAffiliatePnl(filters, range) {
+      filters = filters || {};
+      return (data.affiliatePnl || []).filter(function (row) {
+        return (range ? row.date >= range[0] && row.date <= range[1] : inDateRange(row.date))
+          && (!filters.programme || filters.programme === 'all' || row.programme === filters.programme)
+          && (!filters.country || filters.country === 'all' || row.country === filters.country)
+          && (!filters.size || filters.size === 'all' || Number(row.accountSize) === Number(filters.size));
+      });
+    }
     data.filterOrders = selected;
     data.getMetrics = function (filters) {
       var rows = selected(filters);
@@ -171,18 +199,35 @@
       });
       return Object.keys(groups).map(function (key) { return groups[key]; }).sort(function (a, b) { return b.netSales - a.netSales; });
     };
-    data.getAffiliates = function (filters) {
+    data.getAffiliates = function (filters, range) {
       return data.affiliates.map(function (affiliate) {
         var rows = selected(filters).filter(function (row) { return row.affiliateId === affiliate.id; });
-        var newRows = rows.filter(function (row) { return row.isNewCustomer; });
+        var components = selectedAffiliatePnl(filters, range).filter(function (row) {
+          return row.allocationBucket === 'attributed' && row.affiliateId === affiliate.id;
+        });
+        var revenue = components.filter(function (row) { return row.componentType === 'revenue'; });
+        var commissions = components.filter(function (row) { return row.componentType === 'commission'; });
+        var payouts = components.filter(function (row) { return row.componentType === 'payout'; });
+        var newRows = revenue.filter(function (row) { return row.customerType === 'new'; });
+        var existingRows = revenue.filter(function (row) { return row.customerType === 'existing'; });
+        var complete = components.every(function (row) { return row.amountKnown !== false; });
+        var netSales = total(revenue, 'amount');
+        var commission = total(commissions, 'amount');
+        var payoutCost = total(payouts, 'amount');
+        var contribution = complete ? netSales - commission - payoutCost : null;
         return Object.assign({}, affiliate, {
-          netSales: total(rows, 'netSales'), contribution: null,
-          newCustomers: new Set(newRows.map(function (row) { return row.customerId; })).size,
-          commission: null, acquisitionCost: null, payoutCost: null, refunds: total(rows, 'refund'),
-          orders: rows.length, cac: null, ltv: null, margin: null
+          netSales: netSales, contribution: contribution,
+          newCustomers: new Set(newRows.map(function (row) { return row.customerId; }).filter(Boolean)).size,
+          existingCustomers: new Set(existingRows.map(function (row) { return row.customerId; }).filter(Boolean)).size,
+          customers: new Set(revenue.map(function (row) { return row.customerId; }).filter(Boolean)).size,
+          commission: complete ? commission : null, acquisitionCost: null, payoutCost: complete ? payoutCost : null, refunds: total(rows, 'refund'),
+          orders: new Set(revenue.map(function (row) { return String(row.storeId) + ':' + String(row.orderId); })).size,
+          cac: null, ltv: null, margin: contribution !== null && netSales ? contribution / netSales * 100 : null,
+          commissionComplete: complete, trafficType: 'fast-track', trafficTypeLabel: 'Fast Track'
         });
       }).filter(function (affiliate) { return affiliate.orders > 0; }).sort(function (a, b) { return b.netSales - a.netSales; });
     };
+    data.getAffiliatePnl = data.getAffiliates;
     data.getCustomers = function (filters) {
       var ids = new Set(selected(filters).map(function (row) { return row.customerId; }));
       return data.customers.filter(function (row) { return ids.has(row.id); }).sort(function (a, b) { return b.totalSpend - a.totalSpend; });
@@ -268,6 +313,7 @@
     replaceArray(window.BIData.orders, adapted.orders);
     replaceArray(window.BIData.affiliates, adapted.affiliates);
     replaceArray(window.BIData.customers, adapted.customers);
+    window.BIData.affiliatePnl = adapted.affiliatePnl.slice();
     window.BIData.productionProfitability = Array.isArray(data.profitability) ? data.profitability.slice() : [];
     window.BIData.productionMarketing = data.marketing && typeof data.marketing === 'object' ? data.marketing : null;
     window.BIData.productionWithdrawable = data.withdrawable && typeof data.withdrawable === 'object' ? data.withdrawable : null;
@@ -935,22 +981,25 @@
         value.textContent = 'Unavailable';
       });
     } else {
-      root.querySelectorAll('.econ-page .econ-table tr').forEach(function (row) {
-        var otherCosts = row.querySelector('td:nth-child(5)');
-        if (otherCosts) otherCosts.textContent = 'Unavailable';
-      });
+      var affiliatePnlReady = state.snapshot && state.snapshot.quality && state.snapshot.quality.affiliatePnlReady;
+      if (!affiliatePnlReady) root.querySelectorAll('.econ-page .econ-table tr').forEach(function (row) {
+          var otherCosts = row.querySelector('td:nth-child(5)');
+          if (otherCosts) otherCosts.textContent = 'Unavailable';
+        });
       root.querySelectorAll('.econ-page .econ-waterfall-row.cost').forEach(function (row) {
         var label = row.querySelector('span');
         var value = row.querySelector('strong');
-        if (label && value && !/Allocated trader rewards/i.test(label.textContent)) value.textContent = 'Unavailable';
+        if (label && value && !/Allocated trader rewards/i.test(label.textContent) && !(affiliatePnlReady && /Affiliate commissions/i.test(label.textContent))) value.textContent = 'Unavailable';
       });
     }
-    root.querySelectorAll('.afg-page .kpi-card').forEach(function (card) {
-      var label = card.querySelector('.kpi-label');
-      if (!label || !/(p&l|profit|commission|margin|cost|cac)/i.test(label.textContent)) return;
-      var value = card.querySelector('.kpi-value');
-      if (value) value.textContent = 'Unavailable';
-    });
+    if (!(state.snapshot && state.snapshot.quality && state.snapshot.quality.affiliatePnlReady)) {
+      root.querySelectorAll('.afg-page .kpi-card').forEach(function (card) {
+        var label = card.querySelector('.kpi-label');
+        if (!label || !/(p&l|profit|commission|margin|cost|cac)/i.test(label.textContent)) return;
+        var value = card.querySelector('.kpi-value');
+        if (value) value.textContent = 'Unavailable';
+      });
+    }
     var competitor = root.querySelector('.competitor-monitor,.competitor-page');
     if (competitor && !window.BICompetitorMonitorData) {
       if (!competitor.querySelector('.production-missing-source')) competitor.insertAdjacentHTML('afterbegin', '<div class="production-missing-source"><strong>No live data</strong><span>Competitor monitoring source is not connected.</span></div>');

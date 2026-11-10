@@ -2665,9 +2665,52 @@ if (location.protocol !== 'file:') document.documentElement.classList.add('produ
     return rows.slice().sort((a, b) => (b[key] || 0) - (a[key] || 0) || a.name.localeCompare(b.name));
   }
   function liveProfitability(ctx, by) {
+    const pnlSource = Array.isArray(ctx.data.affiliatePnl) ? ctx.data.affiliatePnl : [];
+    const live = window.BIProductionConnector;
+    if (pnlSource.length && ctx.data.productionQuality && ctx.data.productionQuality.affiliatePnlReady) {
+      const selected = pnlSource.filter(row =>
+        (!live || !live.inDateRange || live.inDateRange(row.date)) &&
+        (!ctx.filters.programme || ctx.filters.programme === 'all' || row.programme === ctx.filters.programme) &&
+        (!ctx.filters.size || ctx.filters.size === 'all' || Number(row.accountSize) === Number(ctx.filters.size)) &&
+        (!ctx.filters.country || ctx.filters.country === 'all' || row.country === ctx.filters.country) &&
+        (!ctx.filters.channel || ctx.filters.channel === 'all' || ctx.filters.channel === 'Affiliate' && row.allocationBucket === 'attributed')
+      );
+      const aggregatePnl = rows => {
+        const revenueRows=rows.filter(row=>row.componentType==='revenue');
+        const commissionRows=rows.filter(row=>row.componentType==='commission');
+        const payoutRows=rows.filter(row=>row.componentType==='payout');
+        const netSales=cents(revenueRows.reduce((total,row)=>total+(Number(row.amount)||0),0));
+        const commissions=cents(commissionRows.reduce((total,row)=>total+(Number(row.amount)||0),0));
+        const rewardCost=cents(payoutRows.reduce((total,row)=>total+(Number(row.amount)||0),0));
+        const complete=rows.every(row=>row.amountKnown!==false);
+        const profit=complete?cents(netSales-commissions-rewardCost):null;
+        const orderIds=new Set(revenueRows.map(row=>String(row.storeId)+':'+String(row.orderId)));
+        const rawOrders=(ctx.data.orders||[]).filter(order=>orderIds.has(order.id));
+        return {orders:orderIds.size,customers:new Set(revenueRows.map(row=>row.customerId).filter(Boolean)).size,
+          newCustomers:new Set(revenueRows.filter(row=>row.customerType==='new').map(row=>row.customerId).filter(Boolean)).size,
+          repeatCustomers:new Set(revenueRows.filter(row=>row.customerType==='existing').map(row=>row.customerId).filter(Boolean)).size,
+          newOrders:revenueRows.filter(row=>row.customerType==='new').length,repeatOrders:revenueRows.filter(row=>row.customerType==='existing').length,
+          grossSales:netSales,discounts:0,refunds:0,chargebacks:0,netSales,rewardCost,processing:0,platform:0,commissions,
+          acquisition:0,retainers:0,paidAcquisition:0,otherCosts:null,profit,margin:profit===null?null:pct(profit,netSales),
+          profitPerAccount:profit===null?null:orderIds.size?profit/orderIds.size:0,activeFunded:0,unpaidRewards:null,approvedUnpaid:null,
+          repeatShare:pct(revenueRows.filter(row=>row.customerType==='existing').length,revenueRows.length),refundRate:null,rawOrders,
+          commissionComplete:complete,commissionRecordedOrders:commissionRows.length,commissionMissingOrders:complete?0:1};
+      };
+      const buckets=new Map();
+      selected.forEach(row=>{const key=String(by==='size'?row.accountSize:row.programme);if(!buckets.has(key))buckets.set(key,[]);buckets.get(key).push(row);});
+      let rows=Array.from(buckets,([id,values])=>Object.assign(aggregatePnl(values),{id,name:by==='size'?ctx.ui.money(Number(id)):id,kind:by,
+        totalAccounts:new Set(values.filter(row=>row.componentType==='revenue').map(row=>String(row.storeId)+':'+String(row.orderId))).size,
+        immatureAccounts:0,matureAccounts:new Set(values.filter(row=>row.componentType==='revenue').map(row=>String(row.storeId)+':'+String(row.orderId))).size,
+        cohortOrders:[],horizon:14,oldestAge:0,youngestAge:0}));
+      const q=String(defaults(ctx.local).econSearch).trim().toLowerCase();
+      rows=sortRows(rows.filter(row=>!q||(row.name+' '+row.id).toLowerCase().includes(q)),defaults(ctx.local).econSort);
+      const representedKeys=new Set(rows.map(row=>String(row.id)));
+      const represented=selected.filter(row=>representedKeys.has(String(by==='size'?row.accountSize:row.programme)));
+      return {view:by,horizon:14,rows,totals:aggregatePnl(represented),selectedAccounts:rows.reduce((n,row)=>n+row.totalAccounts,0),
+        matureAccounts:rows.reduce((n,row)=>n+row.totalAccounts,0),immatureAccounts:0,snapshot:ctx.data.asOf,live:true,costsAvailable:true};
+    }
     const source = Array.isArray(ctx.data.productionProfitability) ? ctx.data.productionProfitability : [];
     if (!source.length) return null;
-    const live = window.BIProductionConnector;
     const needsOrderScope = (ctx.filters.country && ctx.filters.country !== 'all') ||
       (ctx.filters.channel && ctx.filters.channel !== 'all');
     if (needsOrderScope) {
@@ -2811,6 +2854,38 @@ if (location.protocol !== 'file:') document.documentElement.classList.add('produ
     const l=defaults(ctx.local), all=normalise(ctx), affiliateOrders=uniqueAffiliateOrders(all.filter(o=>o.affiliateId));
     const type=['overview','fast-track','traditional','offers'].includes(l.econAffType)?l.econAffType:'overview';
     const mode=type==='offers'?'promotions':type==='overview'?'overview':['partners','codes','links'].includes(l.econAffView)?l.econAffView:'partners';
+    if(ctx.data.productionQuality&&ctx.data.productionQuality.affiliatePnlReady&&typeof ctx.data.getAffiliates==='function'){
+      const liveRows=ctx.data.getAffiliates(ctx.filters).map(affiliate=>{
+        const rawOrders=affiliateOrders.filter(order=>order.affiliateId===affiliate.id);
+        const repeatOrders=Math.max(0,affiliate.orders-affiliate.newCustomers);
+        return {...affiliate,id:affiliate.id,name:affiliate.name,partnerId:affiliate.id,partnerName:affiliate.name,kind:'partner',initials:affiliate.initials,
+          country:'Unknown',secondary:'Fast Track',trafficType:'fast-track',trafficTypeLabel:'Fast Track',grossSales:affiliate.netSales,discounts:0,
+          refunds:affiliate.refunds||0,chargebacks:0,commissions:affiliate.commission,rewardCost:affiliate.payoutCost,acquisition:0,retainers:0,
+          paidAcquisition:0,processing:0,platform:0,profit:affiliate.contribution,margin:affiliate.margin,customers:affiliate.customers||0,
+          repeatCustomers:affiliate.existingCustomers||0,newOrders:affiliate.newCustomers||0,repeatOrders,repeatShare:affiliate.orders?repeatOrders/affiliate.orders*100:0,
+          commissionComplete:affiliate.commissionComplete!==false,commissionRecordedOrders:affiliate.orders,commissionMissingOrders:affiliate.commissionComplete===false?affiliate.orders:0,
+          rawOrders,codeOrders:0,linkOrders:0};
+      });
+      const combine=rows=>({orders:rows.reduce((n,row)=>n+row.orders,0),customers:rows.reduce((n,row)=>n+row.customers,0),
+        newCustomers:rows.reduce((n,row)=>n+row.newCustomers,0),repeatCustomers:rows.reduce((n,row)=>n+row.repeatCustomers,0),
+        newOrders:rows.reduce((n,row)=>n+row.newOrders,0),repeatOrders:rows.reduce((n,row)=>n+row.repeatOrders,0),
+        grossSales:cents(rows.reduce((n,row)=>n+row.grossSales,0)),discounts:0,refunds:cents(rows.reduce((n,row)=>n+row.refunds,0)),chargebacks:0,
+        netSales:cents(rows.reduce((n,row)=>n+row.netSales,0)),commissions:rows.every(row=>row.commissions!==null)?cents(rows.reduce((n,row)=>n+row.commissions,0)):null,
+        acquisition:0,retainers:0,paidAcquisition:0,processing:0,platform:0,rewardCost:rows.every(row=>row.rewardCost!==null)?cents(rows.reduce((n,row)=>n+row.rewardCost,0)):null,
+        profit:rows.every(row=>row.profit!==null)?cents(rows.reduce((n,row)=>n+row.profit,0)):null,
+        margin:rows.every(row=>row.profit!==null)&&rows.reduce((n,row)=>n+row.netSales,0)?pct(rows.reduce((n,row)=>n+row.profit,0),rows.reduce((n,row)=>n+row.netSales,0)):null,
+        repeatShare:rows.reduce((n,row)=>n+row.orders,0)?rows.reduce((n,row)=>n+row.repeatOrders,0)/rows.reduce((n,row)=>n+row.orders,0)*100:0,
+        commissionComplete:rows.every(row=>row.commissionComplete),commissionRecordedOrders:rows.reduce((n,row)=>n+row.commissionRecordedOrders,0),
+        commissionMissingOrders:rows.reduce((n,row)=>n+row.commissionMissingOrders,0),rawOrders:rows.flatMap(row=>row.rawOrders)});
+      const fastTotals=combine(liveRows),emptyTotals=combine([]);
+      const typeRows=[{...fastTotals,id:'fast-track',name:'Fast Track',kind:'traffic',trafficType:'fast-track',trafficTypeLabel:'Fast Track',partners:liveRows.length},
+        {...emptyTotals,id:'traditional',name:'Prop firm affiliates',kind:'traffic',trafficType:'traditional',trafficTypeLabel:'Prop firm affiliates',partners:0}];
+      const scoped=type==='traditional'||type==='offers'?[]:liveRows;
+      const rows=mode==='overview'?typeRows:mode==='partners'?sortAffiliateRows(scoped,l.econAffSort):[];
+      const totals=mode==='overview'?fastTotals:combine(scoped);
+      return {type,mode,rows,typeRows,totals,scopeTotals:totals,partners:scoped.length,partnerRows:sortAffiliateRows(liveRows,'profit'),
+        leaders:sortAffiliateRows(scoped,'profit').slice(0,4),selectedOrders:totals.orders,tracking:[],dualSignalOrders:0};
+    }
     const scope=type==='offers'?all:affiliateOrders.filter(o=>type==='overview'||trafficType(o,ctx.data)===type);
     const source=scope.filter(o=>mode==='codes'?trackingMethod(o)==='code':mode==='links'?trackingMethod(o)==='link':true);
     const typeRows=Object.keys(trafficLabels).map(id=>{
@@ -6983,16 +7058,16 @@ if (location.protocol !== 'file:') document.documentElement.classList.add('produ
       !['failed','unpaid','pending','cancelled','canceled','declined','incomplete'].includes(status)&&!kind.includes('addon')&&num(order.grossSales)-num(order.discount)>0;
   }
   function purchaseLedger(data){const seen=new Set();return (data.orders||[]).filter(order=>{const key=String(order.id||'');if(seen.has(key)||!successfulChallenge(order))return false;seen.add(key);return true;});}
-  function growthFor(current,previous,windows,partners){
+  function growthFor(current,previous,windows,partners,data){
     const activeNow=new Set(current.map(o=>o.affiliateId)),activeBefore=new Set(previous.map(o=>o.affiliateId));
-    const dayTotals=rows=>{const commission=commissionTotals(rows);return {active:distinct(rows,'affiliateId'),orders:rows.length,netSales:sum(rows,'netSales'),commissions:commission.commissions,profit:commission.commissionComplete?round(sum(rows,'netSales')-commission.commissions-sum(rows,'acquisitionCost')-sum(rows,'pspFee')-sum(rows,'platformCost')-sum(rows,'payoutCost')):null};};
+    const dayTotals=(rows,day)=>{const value=totals(rows,[day,day],new Map(),data);return {active:distinct(rows,'affiliateId'),orders:value.orders,netSales:value.netSales,commissions:value.commissions,profit:value.profit};};
     const currentDays=new Map(),priorDays=new Map();
     current.forEach(o=>{if(!currentDays.has(o.date))currentDays.set(o.date,[]);currentDays.get(o.date).push(o);});
     previous.forEach(o=>{if(!priorDays.has(o.date))priorDays.set(o.date,[]);priorDays.get(o.date).push(o);});
     const days=Math.max(0,Math.round((stamp(windows.current[1])-stamp(windows.current[0]))/DAY)+1);
     const series=Array.from({length:days},(_,index)=>{
       const day=plus(windows.current[0],index),priorDate=windows.comparable?plus(windows.prior[0],index):null;
-      return {date:day,priorDate,current:dayTotals(currentDays.get(day)||[]),previous:windows.comparable?dayTotals(priorDays.get(priorDate)||[]):null};
+      return {date:day,priorDate,current:dayTotals(currentDays.get(day)||[],day),previous:windows.comparable?dayTotals(priorDays.get(priorDate)||[],priorDate):null};
     });
     const groups={
       now:partners.filter(p=>activeNow.has(p.affiliateId)),
@@ -7004,7 +7079,24 @@ if (location.protocol !== 'file:') document.documentElement.classList.add('produ
   }
 
   function matches(row,f){return ['programme','country','channel'].every(k=>!f[k]||f[k]==='all'||row[k]===f[k])&&(!f.size||f.size==='all'||Number(row.accountSize)===Number(f.size));}
-  function totals(rows,range,firstPurchases){
+  function totals(rows,range,firstPurchases,data){
+    const liveComponents=data&&Array.isArray(data.affiliatePnl)&&data.productionQuality&&data.productionQuality.affiliatePnlReady;
+    if(liveComponents){
+      const affiliateIds=new Set(rows.map(row=>row.affiliateId).filter(Boolean)),countries=new Set(rows.map(row=>row.country).filter(Boolean));
+      const components=data.affiliatePnl.filter(row=>row.allocationBucket==='attributed'&&row.date>=range[0]&&row.date<=range[1]&&affiliateIds.has(row.affiliateId)&&(!countries.size||countries.has(row.country)));
+      const revenue=components.filter(row=>row.componentType==='revenue'),commissionsRows=components.filter(row=>row.componentType==='commission'),payoutRows=components.filter(row=>row.componentType==='payout');
+      const complete=components.every(row=>row.amountKnown!==false),netSales=sum(revenue,'amount'),commissions=complete?sum(commissionsRows,'amount'):null,rewards=complete?sum(payoutRows,'amount'):null;
+      const orderKeys=new Set(revenue.map(row=>String(row.storeId)+':'+String(row.orderId))),customers=[...new Set(revenue.map(row=>row.customerId).filter(Boolean))];
+      const newCustomers=new Set(revenue.filter(row=>row.customerType==='new').map(row=>row.customerId).filter(Boolean)).size;
+      const existingCustomers=new Set(revenue.filter(row=>row.customerType==='existing').map(row=>row.customerId).filter(Boolean)).size;
+      const profit=complete?round(netSales-commissions-rewards):null;
+      return {orders:orderKeys.size,customers:customers.length,newCustomers,existingCustomers,repeatCustomers:existingCustomers,
+        grossSales:sum(rows,'grossSales'),discounts:sum(rows,'discount'),refunds:sum(rows,'refund'),chargebacks:sum(rows,'chargeback'),
+        netSales,commissions,commissionComplete:complete,commissionRecordedOrders:commissionsRows.length,commissionMissingOrders:complete?0:orderKeys.size,
+        retainers:0,processing:0,platform:0,rewards,profit,margin:profit!==null&&netSales>0?profit/netSales*100:null,
+        partnerSpend:commissions,profitPerOrder:profit!==null&&orderKeys.size?profit/orderKeys.size:null,refundRate:null,
+        codeOrders:0,linkOrders:0,rawOrders:rows};
+    }
     const customers=[...new Set(rows.map(o=>o.customerId))],newCustomers=customers.filter(id=>firstPurchases.get(id)>=range[0]&&firstPurchases.get(id)<=range[1]).length;
     const netSales=sum(rows,'netSales'),commission=commissionTotals(rows),commissions=commission.commissions,retainers=sum(rows,'acquisitionCost'),processing=sum(rows,'pspFee'),platform=sum(rows,'platformCost'),rewards=sum(rows,'payoutCost');
     const profit=commission.commissionComplete?round(netSales-commissions-retainers-processing-platform-rewards):null;
@@ -7045,7 +7137,7 @@ if (location.protocol !== 'file:') document.documentElement.classList.add('produ
     const alertsByAccount=risk?risk.accountAlerts:{};
     const build=(kind,affiliateId,country)=>{
       const match=o=>(!affiliateId||o.affiliateId===affiliateId)&&(!country||o.country===country),a=affiliates.get(affiliateId);
-      const c=totals(current.filter(match),windows.current,firstPurchases),p=windows.comparable?totals(previous.filter(match),windows.prior,firstPurchases):null;
+       const c=totals(current.filter(match),windows.current,firstPurchases,data),p=windows.comparable?totals(previous.filter(match),windows.prior,firstPurchases,data):null;
       const accounts=activeAccounts.filter(x=>match(x.order)).map(x=>x.account),alerts=[...new Map(accounts.flatMap(account=>(alertsByAccount[account.id]||[])).map(alert=>[alert.id,alert])).values()];
       const salesChange=windows.comparable&&p.netSales>0?(c.netSales-p.netSales)/p.netSales*100:null;
       const rowTypes=[...new Set([...c.rawOrders,...(p?p.rawOrders:[])].map(typeFor))],commonType=a?(a.trafficType||'traditional'):rowTypes.length===1?rowTypes[0]:'all';
@@ -7065,11 +7157,11 @@ if (location.protocol !== 'file:') document.documentElement.classList.add('produ
     const selected=groups.filter(row=>(!search||[row.name,row.trafficLabel,row.decision.label].join(' ').toLowerCase().includes(search))&&(settings.signal==='all'||settings.signal==='growing'&&row.growing||settings.signal===row.decision.key||settings.signal==='decline'&&row.declining));
     const rows=selected.slice().sort((a,b)=>settings.sort==='name'?a.name.localeCompare(b.name):(ranked(b[settings.sort])-ranked(a[settings.sort])||ranked(b.profit)-ranked(a.profit)||a.name.localeCompare(b.name)));
     const pageCount=Math.max(1,Math.ceil(rows.length/10)),page=Math.min(settings.page,pageCount-1);
-    const portfolio=totals(current,windows.current,firstPurchases),priorTotals=windows.comparable?totals(previous,windows.prior,firstPurchases):null;
+    const portfolio=totals(current,windows.current,firstPurchases,data),priorTotals=windows.comparable?totals(previous,windows.prior,firstPurchases,data):null;
     const scaleCandidates=partners.filter(row=>row.decision.key==='scale').sort((a,b)=>b.profit-a.profit),decliners=partners.filter(row=>row.declining).sort((a,b)=>a.salesChange-b.salesChange);
     const geoCandidates=combinations.filter(row=>row.decision.key==='scale').sort((a,b)=>b.profit-a.profit);
     return {settings,windows,dimensions,rows,page,pageCount,pageRows:rows.slice(page*10,(page+1)*10),chartRows:rows.slice().sort((a,b)=>ranked(b[settings.metric])-ranked(a[settings.metric])).slice(0,6),
-      partners,geos,combinations,allGroups,growth:growthFor(current,previous,windows,partners),totals:portfolio,previous:priorTotals,scaleCandidates,decliners,geoCandidates,
+      partners,geos,combinations,allGroups,growth:growthFor(current,previous,windows,partners,data),totals:portfolio,previous:priorTotals,scaleCandidates,decliners,geoCandidates,
       summary:{partners:partners.length,growing:partners.filter(r=>r.growing).length,declining:decliners.length,scale:scaleCandidates.length,profit:portfolio.profit,profitChange:priorTotals&&portfolio.profit!==null&&priorTotals.profit!==null?round(portfolio.profit-priorTotals.profit):null,commissions:portfolio.commissions,commissionChange:commissionChange(portfolio,priorTotals)},
       thresholds:defaultThresholds,snapshot:data.asOf};
   }
@@ -7092,7 +7184,7 @@ if (location.protocol !== 'file:') document.documentElement.classList.add('produ
   }
   function commissionSummary(ctx,r){
     const u=ctx.ui,c=r.totals,p=r.previous,change=r.summary.commissionChange,changePct=change!==null&&p.commissions>0?change/p.commissions*100:null;
-    return '<section class="panel afg-commission-summary" aria-label="Commission earned"><div class="afg-commission-primary"><span>Commission earned</span><strong>'+amount(u,c.commissions)+'</strong><small>Recorded on affiliate orders · '+u.escape(r.windows.currentLabel)+'</small></div><div class="afg-commission-comparison"><span>Previous period <strong>'+(p?amount(u,p.commissions):'Unavailable')+'</strong></span><span>Change <strong>'+(change===null?'Unavailable':signed(u,change)+(changePct===null?'':' · '+(changePct>0?'+':'')+percent(changePct)))+'</strong></span><small>'+(p?u.escape(r.windows.priorLabel):'Earlier comparison history unavailable')+'</small></div><div class="afg-commission-source"><p>Commission from the purchase ledger. Retainers are separate; this does not show whether a partner has been paid.</p><small>'+u.number(c.commissionRecordedOrders)+' / '+u.number(c.orders)+' orders with recorded commission'+(c.commissionMissingOrders?' · '+u.number(c.commissionMissingOrders)+' missing or invalid':'')+'</small><button class="text-link" data-action="affgrowth-commissions">View by affiliate '+u.icon('arrow',13)+'</button></div></section>';
+    return '<section class="panel afg-commission-summary" aria-label="Commission earned"><div class="afg-commission-primary"><span>Commission earned</span><strong>'+amount(u,c.commissions)+'</strong><small>Accrued and recognized · '+u.escape(r.windows.currentLabel)+'</small></div><div class="afg-commission-comparison"><span>Previous period <strong>'+(p?amount(u,p.commissions):'Unavailable')+'</strong></span><span>Change <strong>'+(change===null?'Unavailable':signed(u,change)+(changePct===null?'':' · '+(changePct>0?'+':'')+percent(changePct)))+'</strong></span><small>'+(p?u.escape(r.windows.priorLabel):'Earlier comparison history unavailable')+'</small></div><div class="afg-commission-source"><p>Recognized accrued commission from the released Affiliate P&amp;L run. Paid amounts are not added a second time.</p><small>'+u.number(c.commissionRecordedOrders)+' recognized commission components'+(c.commissionMissingOrders?' · incomplete coverage flagged':'')+'</small><button class="text-link" data-action="affgrowth-commissions">View by affiliate '+u.icon('arrow',13)+'</button></div></section>';
   }
   function commissionDetail(ctx){
     const r=getReport(ctx),u=ctx.ui;
@@ -7142,7 +7234,7 @@ if (location.protocol !== 'file:') document.documentElement.classList.add('produ
   function opportunities(ctx,r){const u=ctx.ui;const cards=(rows,geo)=>rows.slice(0,3).map(row=>'<button class="afg-opportunity" data-action="affgrowth-detail" data-id="'+u.escape(row.id)+'"><span class="afg-opportunity-top">'+u.badge('Scale candidate','positive')+'<strong>'+changeText(row)+' sales</strong></span><h3>'+u.escape(row.name)+'</h3><p>'+u.escape(row.trafficLabel)+' · '+u.number(row.orders)+' orders</p><span class="afg-opportunity-values"><span><b>'+amount(u,row.profit)+'</b><small>P&L before overheads</small></span><span><b>'+percent(row.margin)+'</b><small>Margin</small></span>'+u.icon('arrow',15)+'</span></button>').join('');
     return '<div class="afg-opportunity-grid"><section class="panel"><div class="panel-header"><div><h2 class="panel-title">Who could take more traffic?</h2><p class="panel-subtitle">Commercial candidates for a controlled test</p></div>'+u.icon('target',18)+'</div><div class="afg-opportunities">'+(r.scaleCandidates.length?cards(r.scaleCandidates,false):'<p class="afg-empty">No partners meet every scale-screening threshold in this selection.</p>')+'</div></section><section class="panel"><div class="panel-header"><div><h2 class="panel-title">Which partner × country combinations?</h2><p class="panel-subtitle">Locate profitable growth within each partner</p></div>'+u.icon('chart',18)+'</div><div class="afg-opportunities">'+(r.geoCandidates.length?cards(r.geoCandidates,true):'<p class="afg-empty">No country combinations meet every threshold. Open Countries to inspect performance and sample sizes.</p>')+'</div></section></div>';
   }
-  function render(ctx){const r=getReport(ctx),u=ctx.ui;return '<div class="afg-page">'+controls(ctx,r)+kpis(ctx,r)+commissionSummary(ctx,r)+growthCharts(ctx,r)+'<div class="afg-top-grid">'+chart(ctx,r)+movers(ctx,r)+'</div>'+table(ctx,r)+opportunities(ctx,r)+'<details class="afg-method"><summary>'+u.icon('info',15)+' How performance and scale candidates are calculated</summary><div><p><strong>Commission earned:</strong> sum of the existing per-order commission values in the selected purchase period. It excludes retainers and does not measure commission payments or balances. Missing or invalid values make the affected total and comparison unavailable; the underlying order amount is shown in partner details. Current recorded refund and commission adjustments stay allocated to the original purchase date.</p><p><strong>P&L:</strong> net sales less commissions, allocated retainers/acquisition, processing, platform and trader reward expense. Fixed overheads and tax are excluded. Cash payouts are not deducted again.</p><p><strong>Scale candidate:</strong> at least 10 orders in each available comparison period, sales growth of at least 10%, positive P&L that is not declining, and at least 20% margin. Any active linked behaviour alert on associated accounts changes the suggestion to Review flags. This is an illustrative commercial screen; it does not establish traffic capacity, incrementality or future results.</p><p><strong>Drop-off:</strong> at least 10 prior orders and a sales decline of 10% or more, including a fall to zero. Small samples and missing prior history remain visible. Search and signal filters affect the table/chart, not the portfolio KPIs.</p><p>New and existing customers are mutually exclusive within each period, based on their first purchase in all available sample history. Country is the purchasing customer’s country. Radar context is the current associated active-account portfolio, including purchases outside the financial period; simulated telemetry covers selected accounts only. All figures and decisions are fictional examples.</p></div></details></div>';}
+  function render(ctx){const r=getReport(ctx),u=ctx.ui;return '<div class="afg-page">'+controls(ctx,r)+kpis(ctx,r)+commissionSummary(ctx,r)+growthCharts(ctx,r)+'<div class="afg-top-grid">'+chart(ctx,r)+movers(ctx,r)+'</div>'+table(ctx,r)+opportunities(ctx,r)+'<details class="afg-method"><summary>'+u.icon('info',15)+' How performance and scale candidates are calculated</summary><div><p><strong>Commission earned:</strong> accrued commission recognized by the released Affiliate P&amp;L run. Approved and paid obligations are counted once; settled cash is not added again.</p><p><strong>P&amp;L:</strong> net sales less accrued commissions and trader payouts allocated through account/order lineage. Fixed overheads, tax and the cost categories not yet connected are excluded.</p><p><strong>Scale candidate:</strong> at least 10 orders in each available comparison period, sales growth of at least 10%, positive P&amp;L that is not declining, and at least 20% margin. Any active linked behaviour alert on associated accounts changes the suggestion to Review flags.</p><p><strong>Drop-off:</strong> at least 10 prior orders and a sales decline of 10% or more, including a fall to zero. Small samples and missing prior history remain visible. Search and signal filters affect the table/chart, not the portfolio KPIs.</p><p>Revenue and accrued commissions use the UTC purchase date; trader payouts use the UTC approval date. New and existing customer counts follow the released warehouse classification and can overlap when the same customer has both order types in one period.</p></div></details></div>';}
 
   function detail(id,ctx){
     const r=getReport(ctx),row=r.allGroups.find(x=>x.id===id);if(!row)return null;
@@ -8581,7 +8673,7 @@ if (location.protocol !== 'file:') document.documentElement.classList.add('produ
       '<select data-owner-aff-control="type" aria-label="Affiliate traffic type">' + [['all', 'All affiliates'], ['fast-track', 'Fast Track'], ['traditional', 'Prop firm affiliates']].map(([key, label]) => '<option value="' + key + '"' + (settings.trafficType === key ? ' selected' : '') + '>' + label + '</option>').join('') + '</select></div></div>' +
       (!report.windows.comparable ? '<div class="owner-aff-history">' + ui.icon('info', 14) + '<span>' + ui.escape(report.windows.reason) + '</span></div>' : '') +
       '<div class="owner-aff-rankings">' + ranking(ctx, report, false) + ranking(ctx, report, true) + '</div>' +
-      '<div class="panel-footer owner-aff-footer"><span>' + report.sourcePartnerCount + ' sample partners in the ledger · up to 10 shown per list<small>Partner credit from codes and links; separate from ThoughtMetric channel attribution.</small></span>' +
+      '<div class="panel-footer owner-aff-footer"><span>' + report.sourcePartnerCount + ' live partners in the ledger · up to 10 shown per list<small>Partner attribution is separate from ThoughtMetric channel attribution.</small></span>' +
       '<button class="text-link" data-action="owner-aff-open">Open affiliates ' + ui.icon('arrow', 13) + '</button></div></section>';
   }
 
@@ -8600,7 +8692,7 @@ if (location.protocol !== 'file:') document.documentElement.classList.add('produ
       '<p>Profit before overheads subtracts the direct costs shown above from net sales. Retainers use their existing order allocation; payout cash is not deducted again.</p></section>' +
       '<section class="detail-section"><h3>Partner activity</h3><div class="detail-grid"><div class="detail-item"><span>Orders · current / last month</span><strong>' + ui.number(row.current.orders) + ' / ' + (row.previous ? ui.number(row.previous.orders) : '—') + '</strong></div><div class="detail-item"><span>Paying customers · current / last month</span><strong>' + ui.number(row.current.customers) + ' / ' + (row.previous ? ui.number(row.previous.customers) : '—') + '</strong></div>' +
       '<div class="detail-item"><span>Current orders via discount code</span><strong>' + ui.number(row.current.codeOrders) + '</strong></div><div class="detail-item"><span>Current orders via tracked link</span><strong>' + ui.number(row.current.linkOrders) + '</strong></div></div></section>' +
-      '<div class="owner-aff-method"><strong>How this snapshot is ranked</strong><p>Performers are ranked by current ' + metric.toLowerCase() + '. Decliners have a negative dollar change and are ranked by the largest dollar fall. A partner can appear in both lists.</p><p>Both periods use the same programme, customer country and account-size filters. Each order is counted once by order ID. Percentage change needs a positive prior value; a zero or loss baseline shows its dollar change only.</p><p>These are fictional partner-attributed orders, separate from ThoughtMetric marketing-channel credits.</p></div>';
+      '<div class="owner-aff-method"><strong>How this snapshot is ranked</strong><p>Performers are ranked by current ' + metric.toLowerCase() + '. Decliners have a negative dollar change and are ranked by the largest dollar fall. A partner can appear in both lists.</p><p>Both periods use the same programme, customer country and account-size filters. Each order is counted once by order ID. Percentage change needs a positive prior value; a zero or loss baseline shows its dollar change only.</p><p>Partner-attributed orders are reported separately from ThoughtMetric marketing-channel credits.</p></div>';
     return { title: row.name, subtitle: 'Affiliate performance · same dates last month', html,
       footer: '<button class="btn btn-secondary" data-action="close-overlay">Close details</button><button class="btn btn-primary" data-action="owner-aff-open">Open affiliates ' + ui.icon('arrow', 14) + '</button>' };
   }
