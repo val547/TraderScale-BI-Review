@@ -26,6 +26,8 @@ jobs:
           node-version: 22
       - name: Check official competitor websites
         run: node scripts/competitor-monitor.mjs --scheduled
+        env:
+          COMPETITOR_BROWSER_FALLBACK: "1"
       - name: Store the daily official-site report
         uses: actions/upload-artifact@v4
         with:

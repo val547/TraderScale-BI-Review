@@ -1,11 +1,16 @@
 import { createHash } from "node:crypto";
+import { execFile } from "node:child_process";
 import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { promisify } from "node:util";
 
 const root = process.cwd();
 const sourcesPath = path.join(root, "public", "dashboard", "data", "competitor-sources.json");
 const outputPath = path.join(root, "public", "dashboard", "data", "competitor-monitor.json");
 const scheduled = process.argv.includes("--scheduled");
+const browserFallbackEnabled = process.env.COMPETITOR_BROWSER_FALLBACK === "1";
+const execFileAsync = promisify(execFile);
+const requestCache = new Map();
 const now = new Date();
 const checkedAt = now.toISOString();
 
@@ -78,6 +83,7 @@ function extractCandidates(html, baseUrl) {
       const url = new URL(match[1], base);
       const host = url.hostname.replace(/^www\./, "");
       if (url.protocol !== "https:" || (host !== baseHost && !host.endsWith(`.${baseHost}`))) continue;
+      if (/(^|\/)(login|log-in|signin|sign-in|signup|sign-up|register|auth|checkout|portal|dashboard)(\/|$)/i.test(url.pathname)) continue;
       url.hash = ""; url.search = "";
       const label = normalize(match[2]).slice(0, 120);
       const kind = pageKind(url.href, label);
@@ -88,19 +94,74 @@ function extractCandidates(html, baseUrl) {
   return candidates.slice(0, 5);
 }
 
-async function fetchHtml(url) {
+function wait(milliseconds) {
+  return new Promise(resolve => setTimeout(resolve, milliseconds));
+}
+
+function retryDelay(response) {
+  const header = response.headers.get("retry-after");
+  if (!header) return 5000;
+  const seconds = Number(header);
+  if (Number.isFinite(seconds)) return Math.min(Math.max(seconds * 1000, 1000), 15000);
+  const date = new Date(header).getTime();
+  return Number.isFinite(date) ? Math.min(Math.max(date - Date.now(), 1000), 15000) : 5000;
+}
+
+function protectionPage(html) {
+  return /just a moment|please wait|shopshield|optimizing your request|verify you are human|checking your browser|access denied|captcha|attention required|cloudflare ray id|performance\s*&\s*security by cloudflare|ray id[:\s]|security checkpoint|vercel\s*\||проверяет[^.]{0,80}не бот|проверяем ваш браузер|контрольная точка безопасности|ожидание ответа/i.test(normalize(html).slice(0, 2500));
+}
+
+async function browserHtml(url) {
+  if (!browserFallbackEnabled) return null;
+  const commands = process.platform === "win32"
+    ? ["C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe", "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe"]
+    : ["google-chrome", "google-chrome-stable", "chromium", "chromium-browser"];
+  for (const command of commands) {
+    try {
+      const { stdout } = await execFileAsync(command, ["--headless=new", "--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage", "--virtual-time-budget=10000", "--dump-dom", url], { timeout: 30000, maxBuffer: 8 * 1024 * 1024 });
+      if (stdout && !protectionPage(stdout)) return { html: stdout, finalUrl: url, via: "browser" };
+    } catch {}
+  }
+  return null;
+}
+
+async function fetchHtmlUncached(url) {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 15000);
+  const timeout = setTimeout(() => controller.abort(), 60000);
   try {
-    const response = await fetch(url, {
-      redirect: "follow", signal: controller.signal,
-      headers: { "user-agent": "TraderScale-Competitor-Monitor/1.0 (+https://traderscale.com)", accept: "text/html,application/xhtml+xml" },
-    });
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    const contentType = response.headers.get("content-type") || "";
-    if (!contentType.includes("text/html")) throw new Error(`Unsupported content type: ${contentType || "unknown"}`);
-    return { html: await response.text(), finalUrl: response.url };
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const response = await fetch(url, {
+        redirect: "follow", signal: controller.signal,
+        headers: { "user-agent": "TraderScale-Competitor-Monitor/1.0 (+https://traderscale.com; official public-page change monitoring)", accept: "text/html,application/xhtml+xml" },
+      });
+      if (response.status === 429 && attempt === 0) {
+        await wait(retryDelay(response));
+        continue;
+      }
+      if ([403, 429].includes(response.status)) {
+        const rendered = await browserHtml(url);
+        if (rendered) return rendered;
+        throw new Error(response.status === 403 ? "Official site blocked automated access (HTTP 403); manual browser review required" : "Official site rate limit remained active (HTTP 429); retry in a later check");
+      }
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const contentType = response.headers.get("content-type") || "";
+      if (!contentType.includes("text/html")) throw new Error(`Unsupported content type: ${contentType || "unknown"}`);
+      const html = await response.text();
+      if (protectionPage(html)) {
+        const rendered = await browserHtml(url);
+        if (rendered) return rendered;
+        throw new Error("Official site protection page detected; manual browser review required");
+      }
+      return { html, finalUrl: response.url, via: "http" };
+    }
+    throw new Error("Official site rate limit remained active (HTTP 429); retry in a later check");
   } finally { clearTimeout(timeout); }
+}
+
+async function fetchHtml(url) {
+  const key = new URL(url).href;
+  if (!requestCache.has(key)) requestCache.set(key, fetchHtmlUncached(key));
+  return requestCache.get(key);
 }
 
 async function inspectPage(kind, url) {
@@ -108,7 +169,7 @@ async function inspectPage(kind, url) {
     const response = await fetchHtml(url);
     const text = normalize(response.html);
     if (text.length < 40) throw new Error("No readable public content");
-    return { kind, title: pageTitle(response.html, kind), url: response.finalUrl, status: "ok", hash: hash(text), text };
+    return { kind, title: pageTitle(response.html, kind), url: response.finalUrl, status: "ok", transport: response.via || "http", hash: hash(text), text };
   } catch (error) {
     return { kind, title: kind, url, status: "failed", summary: error instanceof Error ? error.message : String(error) };
   }
@@ -153,10 +214,11 @@ async function inspectFirm(source, oldFirm) {
     if (stripDynamic(oldCore) === stripDynamic(newCore) || /data-cf-modified-/i.test(`${diff.before} ${diff.after}`)) continue;
     const withoutNumbers = value => value.replace(/[\d.,:%$€£¥]+/g, "#").replace(/\s+/g, " ").trim();
     const numericOnly = withoutNumbers(oldCore) === withoutNumbers(newCore);
+    const promotional = /\b(?:sale|promo|discount|coupon|code|off|start now)\b|\$\d+\w*\s+for\s+only/i.test(`${diff.before} ${diff.after}`);
     changes.push({
       id: `${source.id}-${page.kind.toLowerCase().replace(/[^a-z0-9]+/g, "-")}-${checkedAt.slice(0, 10)}`,
-      category: numericOnly ? "cosmetic" : categoryFor(page.kind), importance: numericOnly ? "low" : ["Trading Rules", "Terms & Conditions", "Payout terms"].includes(page.kind) ? "high" : "medium",
-      title: numericOnly ? `${page.kind} live counters changed` : `${page.kind} content changed`, before: diff.before || "Previous public content is no longer present.",
+      category: numericOnly ? "cosmetic" : promotional ? "pricing" : categoryFor(page.kind), importance: numericOnly ? "low" : promotional ? "medium" : ["Trading Rules", "Terms & Conditions", "Payout terms"].includes(page.kind) ? "high" : "medium",
+      title: numericOnly ? `${page.kind} live counters changed` : promotional ? "Public promotional content changed" : `${page.kind} content changed`, before: diff.before || "Previous public content is no longer present.",
       after: diff.after || "New public content was added.",
       impact: "Review the official source page and assess whether the public offer, rules or customer communication changed.",
       substantive: !numericOnly, urls: [page.url],
@@ -187,7 +249,7 @@ const worker = async () => {
     console.log(`${firm.name}: ${firm.lastStatus}`);
   }
 };
-await Promise.all(Array.from({ length: 6 }, worker));
+await Promise.all(Array.from({ length: 2 }, worker));
 inspected.sort((a, b) => sourceDocument.sources.findIndex(item => item.id === a.id) - sourceDocument.sources.findIndex(item => item.id === b.id));
 
 const runId = `official-${checkedAt.replace(/[:.]/g, "-")}`;
