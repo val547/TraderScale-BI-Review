@@ -2676,14 +2676,14 @@ if (location.protocol !== 'file:') document.documentElement.classList.add('produ
         (!ctx.filters.channel || ctx.filters.channel === 'all' || ctx.filters.channel === 'Affiliate' && row.allocationBucket === 'attributed')
       );
       const aggregatePnl = rows => {
-        const revenueRows=rows.filter(row=>row.componentType==='revenue');
-        const commissionRows=rows.filter(row=>row.componentType==='commission');
-        const payoutRows=rows.filter(row=>row.componentType==='payout');
+        const revenueRows=rows.filter(row=>row.componentType==='revenue'&&row.amountKnown!==false);
+        const commissionRows=rows.filter(row=>row.componentType==='commission'&&row.amountKnown!==false);
+        const payoutRows=rows.filter(row=>row.componentType==='payout'&&row.amountKnown!==false);
         const netSales=cents(revenueRows.reduce((total,row)=>total+(Number(row.amount)||0),0));
         const commissions=cents(commissionRows.reduce((total,row)=>total+(Number(row.amount)||0),0));
         const rewardCost=cents(payoutRows.reduce((total,row)=>total+(Number(row.amount)||0),0));
         const complete=rows.every(row=>row.amountKnown!==false);
-        const profit=complete?cents(netSales-commissions-rewardCost):null;
+        const profit=cents(netSales-commissions-rewardCost);
         const orderIds=new Set(revenueRows.map(row=>String(row.storeId)+':'+String(row.orderId)));
         const rawOrders=(ctx.data.orders||[]).filter(order=>orderIds.has(order.id));
         return {orders:orderIds.size,customers:new Set(revenueRows.map(row=>row.customerId).filter(Boolean)).size,
@@ -2694,7 +2694,7 @@ if (location.protocol !== 'file:') document.documentElement.classList.add('produ
           acquisition:0,retainers:0,paidAcquisition:0,otherCosts:null,profit,margin:profit===null?null:pct(profit,netSales),
           profitPerAccount:profit===null?null:orderIds.size?profit/orderIds.size:0,activeFunded:0,unpaidRewards:null,approvedUnpaid:null,
           repeatShare:pct(revenueRows.filter(row=>row.customerType==='existing').length,revenueRows.length),refundRate:null,rawOrders,
-          commissionComplete:complete,commissionRecordedOrders:commissionRows.length,commissionMissingOrders:complete?0:1};
+          commissionComplete:complete,partialCoverage:!complete,commissionRecordedOrders:commissionRows.length,commissionMissingOrders:complete?0:1};
       };
       const buckets=new Map();
       selected.forEach(row=>{const key=String(by==='size'?row.accountSize:row.programme);if(!buckets.has(key))buckets.set(key,[]);buckets.get(key).push(row);});
@@ -2863,7 +2863,7 @@ if (location.protocol !== 'file:') document.documentElement.classList.add('produ
           refunds:affiliate.refunds||0,chargebacks:0,commissions:affiliate.commission,rewardCost:affiliate.payoutCost,acquisition:0,retainers:0,
           paidAcquisition:0,processing:0,platform:0,profit:affiliate.contribution,margin:affiliate.margin,customers:affiliate.customers||0,
           repeatCustomers:affiliate.existingCustomers||0,newOrders:affiliate.newCustomers||0,repeatOrders,repeatShare:affiliate.orders?repeatOrders/affiliate.orders*100:0,
-          commissionComplete:affiliate.commissionComplete!==false,commissionRecordedOrders:affiliate.orders,commissionMissingOrders:affiliate.commissionComplete===false?affiliate.orders:0,
+        commissionComplete:affiliate.commissionComplete!==false,partialCoverage:affiliate.partialCoverage===true,commissionRecordedOrders:affiliate.orders,commissionMissingOrders:affiliate.commissionComplete===false?affiliate.orders:0,
           rawOrders,codeOrders:0,linkOrders:0};
       });
       const combine=rows=>({orders:rows.reduce((n,row)=>n+row.orders,0),customers:rows.reduce((n,row)=>n+row.customers,0),
@@ -2876,7 +2876,7 @@ if (location.protocol !== 'file:') document.documentElement.classList.add('produ
         margin:rows.every(row=>row.profit!==null)&&rows.reduce((n,row)=>n+row.netSales,0)?pct(rows.reduce((n,row)=>n+row.profit,0),rows.reduce((n,row)=>n+row.netSales,0)):null,
         repeatShare:rows.reduce((n,row)=>n+row.orders,0)?rows.reduce((n,row)=>n+row.repeatOrders,0)/rows.reduce((n,row)=>n+row.orders,0)*100:0,
         commissionComplete:rows.every(row=>row.commissionComplete),commissionRecordedOrders:rows.reduce((n,row)=>n+row.commissionRecordedOrders,0),
-        commissionMissingOrders:rows.reduce((n,row)=>n+row.commissionMissingOrders,0),rawOrders:rows.flatMap(row=>row.rawOrders)});
+        commissionMissingOrders:rows.reduce((n,row)=>n+row.commissionMissingOrders,0),partialCoverage:rows.some(row=>row.partialCoverage),rawOrders:rows.flatMap(row=>row.rawOrders)});
       const fastTotals=combine(liveRows),emptyTotals=combine([]);
       const typeRows=[{...fastTotals,id:'fast-track',name:'Fast Track',kind:'traffic',trafficType:'fast-track',trafficTypeLabel:'Fast Track',partners:liveRows.length},
         {...emptyTotals,id:'traditional',name:'Prop firm affiliates',kind:'traffic',trafficType:'traditional',trafficTypeLabel:'Prop firm affiliates',partners:0}];
@@ -2971,8 +2971,8 @@ if (location.protocol !== 'file:') document.documentElement.classList.add('produ
       card('Margin at day ' + r.horizon,t.orders?u.percent(t.margin):'—','No future reward costs assumed')
     ] : [
       card('Net sales',u.money(t.netSales),u.number(t.orders) + ' account purchases in this selection'),
-      card('Profit before overheads',t.profit==null?'Unavailable':u.money(t.profit),t.profit==null?'Live country/channel cost allocation is not connected':'After all direct costs in the model'),
-      card('Profit margin',t.margin==null?'Unavailable':u.percent(t.margin),t.margin==null?'Live country/channel cost allocation is not connected':'Profit before overheads ÷ net sales'),
+      card('Profit before overheads',t.profit==null?'Unavailable':u.money(t.profit),t.profit==null?'Released P&L components are unavailable':t.partialCoverage?'Known components only · partial coverage':'Net sales − accrued commission − trader payouts'),
+      card('Profit margin',t.margin==null?'Unavailable':u.percent(t.margin),t.margin==null?'Released P&L components are unavailable':t.partialCoverage?'Known components only · partial coverage':'Profit before overheads ÷ net sales'),
       card('Profit per account',t.profitPerAccount==null?'Unavailable':t.orders?u.money(t.profitPerAccount):'—',t.profitPerAccount==null?'Live country/channel cost allocation is not connected':'One account purchase = one order')
     ];
     const horizonControl='<div class="econ-age"><span>Compare at age</span><div class="segmented">' + [14,30,60,90].map(n => '<button data-action="econ-horizon" data-value="' + n + '" class="' + (r.horizon===n?'active':'') + '">' + n + ' days</button>').join('') + '</div></div>';
@@ -3000,7 +3000,7 @@ if (location.protocol !== 'file:') document.documentElement.classList.add('produ
   }
   function renderAffiliateOverview(ctx,r) {
     const u=helpers(ctx),t=r.totals;
-    const cards=[{label:'Affiliate net sales',value:u.money(t.netSales),note:'Fast Track + prop firm affiliates only'},{label:'Profit before overheads',value:commissionMoney(u,t.profit),note:'After commissions, retainers and all direct costs'},{label:'Paying customers',value:u.number(t.customers),note:'Distinct customers across both traffic groups'},{label:'Active partners',value:u.number(r.partners),note:u.number(t.orders)+' attributed orders in this selection'},{label:'Commission earned',value:commissionMoney(u,t.commissions),note:t.commissionComplete?'Recorded order cost · excludes retainers':u.number(t.commissionMissingOrders)+' orders missing commission'}];
+    const cards=[{label:'Affiliate net sales',value:u.money(t.netSales),note:'Fast Track + prop firm affiliates only'},{label:'Profit before overheads',value:commissionMoney(u,t.profit),note:t.partialCoverage?'Known P&L components · partial coverage':'Net sales − accrued commission − trader payouts'},{label:'Paying customers',value:u.number(t.customers),note:'Distinct customers across both traffic groups'},{label:'Active partners',value:u.number(r.partners),note:u.number(t.orders)+' attributed orders in this selection'},{label:'Commission earned',value:commissionMoney(u,t.commissions),note:t.commissionComplete?'Recognized accrued commission':u.number(t.commissionMissingOrders)+' records need coverage review'}];
     return '<div class="econ-page">'+affiliateNavigation(ctx,r)+'<div class="page-kpis five">'+cards.map(c=>u.metric(c)).join('')+'</div><div class="econ-traffic-cards">'+r.typeRows.map(type=>'<section class="panel econ-traffic-card '+(type.id==='fast-track'?'fast':'traditional')+'"><div class="econ-traffic-title"><span class="econ-traffic-mark">'+u.icon(type.id==='fast-track'?'route':'users',22)+'</span><div><h2>'+u.escape(type.name)+'</h2><p>'+u.number(type.partners)+' partners · '+u.number(type.orders)+' orders · '+u.number(type.customers)+' customers</p></div></div><div class="econ-traffic-results"><div><span>Net sales</span><strong>'+u.money(type.netSales)+'</strong></div><div><span>Profit before overheads</span><strong class="'+(type.profit>=0?'positive':'negative')+'">'+commissionMoney(u,type.profit)+'</strong></div></div><div class="econ-traffic-costs"><div><span>Commission earned</span><strong>'+commissionMoney(u,type.commissions)+'</strong></div><div><span>Retainers & acquisition</span><strong>'+u.money(type.acquisition)+'</strong></div><div><span>Trader reward expense</span><strong>'+u.money(type.rewardCost)+'</strong></div><div><span>Processing & platform</span><strong>'+u.money(type.processing+type.platform)+'</strong></div><div><span>Profit margin</span><strong>'+(type.margin===null?'Unavailable':u.percent(type.margin))+'</strong></div></div><button class="btn btn-secondary btn-small" data-action="econ-aff-type" data-value="'+type.id+'">Explore '+u.escape(type.name)+' '+u.icon('arrow',14)+'</button></section>').join('')+'</div><section class="panel">'+u.head('Partners across both traffic types','Ranked by profit before overheads',u.export('acquisition'))+(r.partnerRows.length?affiliateTable({...ctx,local:{...ctx.local,econAffDisplay:'performance'}},{mode:'partners',rows:r.partnerRows}):blank(ctx,'No affiliate orders in this selection','Change the reporting period or global filters.'))+'<div class="panel-footer econ-footnote">The two traffic groups reconcile to total affiliate results. Commission earned comes from the recorded purchase ledger; retainers are separate and payment status is not measured.</div></section>'+trackingPanel(ctx,r)+'<div class="econ-method-note">'+u.icon('info',18)+'<div><strong>Two traffic groups, one clear view.</strong><p>Fast Track and prop firm affiliates are separate partner types. Each can use a code or a referral link. Traditional prop firm traffic is primarily code-tracked in this demo. “All offers” is a separate business-wide promotion report.</p></div></div></div>';
   }
   function renderAffiliates(ctx) {
@@ -3008,7 +3008,7 @@ if (location.protocol !== 'file:') document.documentElement.classList.add('produ
     if(r.type==='overview')return renderAffiliateOverview(ctx,r);
     const offers=r.type==='offers',typeLabel=trafficLabels[r.type]||'All offers';
     const modeLabel={partners:'All partners',codes:'Discount-code orders',links:'Referral-link orders',promotions:'All business promotions'}[r.mode];
-    const cards=[{label:offers?'Offer-attributed net sales':'Net sales · '+(r.mode==='codes'?'codes':r.mode==='links'?'links':'all partners'),value:u.money(t.netSales),note:offers?'All channels · includes purchases without a code':typeLabel+' · '+modeLabel},{label:'Profit before overheads',value:commissionMoney(u,t.profit),note:'After commissions, retainers & reward expenses'},{label:'New paying customers',value:u.number(t.newCustomers),note:u.number(t.repeatCustomers)+' customers also made repeat purchases'},{label:'Repeat order share',value:u.percent(t.repeatShare),note:u.number(t.repeatOrders)+' repeat / '+u.number(t.orders)+' total orders'},{label:'Commission earned',value:commissionMoney(u,t.commissions),note:t.commissionComplete?'Recorded order cost · excludes retainers':u.number(t.commissionMissingOrders)+' orders missing commission'}];
+    const cards=[{label:offers?'Offer-attributed net sales':'Net sales · '+(r.mode==='codes'?'codes':r.mode==='links'?'links':'all partners'),value:u.money(t.netSales),note:offers?'Source not connected yet':typeLabel+' · '+modeLabel},{label:'Profit before overheads',value:commissionMoney(u,t.profit),note:t.partialCoverage?'Known P&L components · partial coverage':'Net sales − accrued commission − trader payouts'},{label:'New paying customers',value:u.number(t.newCustomers),note:u.number(t.repeatCustomers)+' customers also made repeat purchases'},{label:'Repeat order share',value:u.percent(t.repeatShare),note:u.number(t.repeatOrders)+' repeat / '+u.number(t.orders)+' total orders'},{label:'Commission earned',value:commissionMoney(u,t.commissions),note:t.commissionComplete?'Recognized accrued commission':u.number(t.commissionMissingOrders)+' records need coverage review'}];
     const subnav=offers?'<div class="econ-aff-scope"><strong>Business-wide offers</strong><span>Includes affiliate and non-affiliate orders. Do not add to affiliate totals.</span></div>':'<div class="econ-aff-scope"><div><strong>'+typeLabel+'</strong><span>Traffic group</span></div><div class="segmented" aria-label="Affiliate tracking breakdown">'+[['partners','Partners'],['codes','Discount codes'],['links','Referral links']].map(([v,n])=>'<button data-action="econ-aff-view" data-value="'+v+'" class="'+(r.mode===v?'active':'')+'">'+n+'</button>').join('')+'</div></div>';
     return '<div class="econ-page">'+affiliateNavigation(ctx,r)+subnav+'<div class="page-kpis five">'+cards.map(c=>u.metric(c)).join('')+'</div><section class="panel">'+u.head(modeLabel+' · profitability',offers?'Fictional promotion codes, across the whole business':'Every order has one affiliate and one winning tracking method',u.export('acquisition'))+'<div class="toolbar econ-toolbar">'+searchControl(ctx,true)+'<div class="econ-toolbar-right"><div class="segmented">'+[['performance','Performance'],['costs','Cost breakdown']].map(([v,n])=>'<button data-action="econ-aff-display" data-value="'+v+'" class="'+(l.econAffDisplay===v?'active':'')+'">'+n+'</button>').join('')+'</div>'+sortControl(ctx,true)+'</div></div>'+(r.rows.length?affiliateTable(ctx,r):blank(ctx,'No attributed orders match','Choose another tracking method, search term or global filter.'))+'<div class="panel-footer econ-footnote"><span>'+r.rows.length+' groups · '+u.number(t.orders)+' orders</span><span>Open a row for earned commission, tracking evidence and account records.</span></div></section>'+(!offers?trackingPanel(ctx,r):'')+'<div class="econ-bottom-grid"><section class="panel">'+u.head('Cost of these orders','Already included in profit before overheads')+'<div class="econ-waterfall">'+[['Discounts',t.discounts],['Commission earned',t.commissions],['Allocated retainers',t.retainers],['Other acquisition',t.paidAcquisition],['Trader reward expense',t.rewardCost],['Processing & platform',t.processing+t.platform]].map(([name,value])=>'<div class="econ-waterfall-row"><span>'+name+'</span><strong>'+commissionMoney(u,value)+'</strong></div>').join('')+'</div></section><section class="panel">'+u.head('Customer mix','First orders and repeat orders in this view')+'<div class="panel-body"><div class="econ-mix-bar"><span style="width:'+(t.orders?100-t.repeatShare:0).toFixed(2)+'%"></span><span style="width:'+t.repeatShare.toFixed(2)+'%"></span></div><div class="econ-mix-legend"><span><i></i>First orders <strong>'+u.number(t.newOrders)+'</strong></span><span><i></i>Repeat orders <strong>'+u.number(t.repeatOrders)+'</strong></span></div><div class="econ-mini-stats"><div><span>Distinct paying customers</span><strong>'+u.number(t.customers)+'</strong></div><div><span>Refunds & disputes / collected sales</span><strong>'+u.percent(t.refundRate)+'</strong></div></div></div></section></div><div class="econ-method-note">'+u.icon('info',18)+'<div><strong>Traffic type and tracking method answer different questions.</strong><p>Fast Track and prop firm affiliates describe the partner group. Codes and links describe how an order is attributed. If both signals belong to the same partner, this demo counts the order once under its recorded winning method. Attributed sales are not proof of incremental sales. Commission earned is the sum of recorded order commissions by purchase date, excluding retainers. It does not indicate whether the affiliate has been paid. Current recorded adjustments stay on the original purchase date; missing amounts remain unavailable. All records and codes are fictional.</p></div></div></div>';
   }
@@ -7084,15 +7084,15 @@ if (location.protocol !== 'file:') document.documentElement.classList.add('produ
     if(liveComponents){
       const affiliateIds=new Set(rows.map(row=>row.affiliateId).filter(Boolean)),countries=new Set(rows.map(row=>row.country).filter(Boolean));
       const components=data.affiliatePnl.filter(row=>row.allocationBucket==='attributed'&&row.date>=range[0]&&row.date<=range[1]&&affiliateIds.has(row.affiliateId)&&(!countries.size||countries.has(row.country)));
-      const revenue=components.filter(row=>row.componentType==='revenue'),commissionsRows=components.filter(row=>row.componentType==='commission'),payoutRows=components.filter(row=>row.componentType==='payout');
-      const complete=components.every(row=>row.amountKnown!==false),netSales=sum(revenue,'amount'),commissions=complete?sum(commissionsRows,'amount'):null,rewards=complete?sum(payoutRows,'amount'):null;
+      const revenue=components.filter(row=>row.componentType==='revenue'&&row.amountKnown!==false),commissionsRows=components.filter(row=>row.componentType==='commission'&&row.amountKnown!==false),payoutRows=components.filter(row=>row.componentType==='payout'&&row.amountKnown!==false);
+      const complete=components.every(row=>row.amountKnown!==false),netSales=sum(revenue,'amount'),commissions=sum(commissionsRows,'amount'),rewards=sum(payoutRows,'amount');
       const orderKeys=new Set(revenue.map(row=>String(row.storeId)+':'+String(row.orderId))),customers=[...new Set(revenue.map(row=>row.customerId).filter(Boolean))];
       const newCustomers=new Set(revenue.filter(row=>row.customerType==='new').map(row=>row.customerId).filter(Boolean)).size;
       const existingCustomers=new Set(revenue.filter(row=>row.customerType==='existing').map(row=>row.customerId).filter(Boolean)).size;
-      const profit=complete?round(netSales-commissions-rewards):null;
+      const profit=round(netSales-commissions-rewards);
       return {orders:orderKeys.size,customers:customers.length,newCustomers,existingCustomers,repeatCustomers:existingCustomers,
         grossSales:sum(rows,'grossSales'),discounts:sum(rows,'discount'),refunds:sum(rows,'refund'),chargebacks:sum(rows,'chargeback'),
-        netSales,commissions,commissionComplete:complete,commissionRecordedOrders:commissionsRows.length,commissionMissingOrders:complete?0:orderKeys.size,
+        netSales,commissions,commissionComplete:complete,partialCoverage:!complete,commissionRecordedOrders:commissionsRows.length,commissionMissingOrders:complete?0:orderKeys.size,
         retainers:0,processing:0,platform:0,rewards,profit,margin:profit!==null&&netSales>0?profit/netSales*100:null,
         partnerSpend:commissions,profitPerOrder:profit!==null&&orderKeys.size?profit/orderKeys.size:null,refundRate:null,
         codeOrders:0,linkOrders:0,rawOrders:rows};
@@ -7170,7 +7170,7 @@ if (location.protocol !== 'file:') document.documentElement.classList.add('produ
   function kpis(ctx,r){
     const u=ctx.ui,comparisonReady=r.windows.comparable&&r.totals.profit!==null;
     const cards=comparisonReady?[
-      ['Affiliate P&L',amount(u,r.totals.profit),'After direct costs · before overheads & tax','all','dollar'],
+      ['Affiliate P&L',amount(u,r.totals.profit),r.totals.partialCoverage?'Known components · partial coverage':'Net sales − accrued commission − trader payouts','all','dollar'],
       ['Growing partners',u.number(r.summary.growing),'At least 10% higher net sales · meaningful live volume','growing','up'],
       ['Partners dropping off',u.number(r.summary.declining),'Net sales down at least 10%','decline','activity'],
       ['Scale candidates',u.number(r.summary.scale),'Commercial screen · discuss a controlled test','scale','target']

@@ -211,19 +211,22 @@
         var newRows = revenue.filter(function (row) { return row.customerType === 'new'; });
         var existingRows = revenue.filter(function (row) { return row.customerType === 'existing'; });
         var complete = components.every(function (row) { return row.amountKnown !== false; });
-        var netSales = total(revenue, 'amount');
-        var commission = total(commissions, 'amount');
-        var payoutCost = total(payouts, 'amount');
-        var contribution = complete ? netSales - commission - payoutCost : null;
+        var knownRevenue = revenue.filter(function (row) { return row.amountKnown !== false; });
+        var knownCommissions = commissions.filter(function (row) { return row.amountKnown !== false; });
+        var knownPayouts = payouts.filter(function (row) { return row.amountKnown !== false; });
+        var netSales = total(knownRevenue, 'amount');
+        var commission = total(knownCommissions, 'amount');
+        var payoutCost = total(knownPayouts, 'amount');
+        var contribution = netSales - commission - payoutCost;
         return Object.assign({}, affiliate, {
           netSales: netSales, contribution: contribution,
           newCustomers: new Set(newRows.map(function (row) { return row.customerId; }).filter(Boolean)).size,
           existingCustomers: new Set(existingRows.map(function (row) { return row.customerId; }).filter(Boolean)).size,
           customers: new Set(revenue.map(function (row) { return row.customerId; }).filter(Boolean)).size,
-          commission: complete ? commission : null, acquisitionCost: null, payoutCost: complete ? payoutCost : null, refunds: total(rows, 'refund'),
+          commission: commission, acquisitionCost: null, payoutCost: payoutCost, refunds: total(rows, 'refund'),
           orders: new Set(revenue.map(function (row) { return String(row.storeId) + ':' + String(row.orderId); })).size,
           cac: null, ltv: null, margin: contribution !== null && netSales ? contribution / netSales * 100 : null,
-          commissionComplete: complete, trafficType: 'fast-track', trafficTypeLabel: 'Fast Track'
+          commissionComplete: complete, partialCoverage: !complete, trafficType: 'fast-track', trafficTypeLabel: 'Fast Track'
         });
       }).filter(function (affiliate) { return affiliate.orders > 0; }).sort(function (a, b) { return b.netSales - a.netSales; });
     };

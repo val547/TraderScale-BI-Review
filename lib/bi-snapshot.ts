@@ -805,7 +805,9 @@ export async function buildSnapshot(serviceAccountJson: string) {
       affiliateId: text(row.affiliate_id).trim(), affiliateName: text(row.affiliate_name).trim(),
       customerId: text(row.customer_id), customerType: text(row.customer_type).trim().toLowerCase(),
       amount: componentType === "commission" ? number(row.recognized_amount_usd) : number(row.amount_usd),
-      amountKnown: row.amount_known === true || text(row.amount_known) === "true",
+      amountKnown: row.amount_known === null || row.amount_known === undefined || text(row.amount_known) === ""
+        ? null
+        : row.amount_known === true || text(row.amount_known).toLowerCase() === "true",
       completenessStatus: text(row.completeness_status),
       productName, programme: productName ? productPlan({ plan: productName }) : "Unknown",
       programmeFamily: productName ? programmeFamily({ plan: productName }) : "Unknown",
