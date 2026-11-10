@@ -2,6 +2,7 @@
   'use strict';
 
   var STATUS_ENDPOINT = 'data/connection-manifest.json';
+  var COMPETITOR_ENDPOINT = 'data/competitor-monitor.json';
   var SNAPSHOT_ENDPOINT = '/api/bi/snapshot';
   var state = {
     mode: 'loading', manifest: null, snapshot: null, error: null,
@@ -787,9 +788,7 @@
     var page = currentPage();
     var dateControl = document.querySelector('.date-control');
     if (!dateControl || state.mode !== 'production') return;
-    var unavailablePages = new Set([
-      'competitors', 'pricing', 'updates'
-    ]);
+    var unavailablePages = new Set(['pricing', 'updates']);
     if (unavailablePages.has(page)) {
       var unavailableContent = document.getElementById('page-content');
       if (unavailableContent && !unavailableContent.querySelector('.no-live-data')) unavailableContent.innerHTML = noLiveDataPage(page);
@@ -840,6 +839,9 @@
       [/demo record/gi, 'live warehouse record'],
       [/simulated payout history from January 2024/gi, 'live warehouse history where available'],
       [/Simulated device links, beneficiary references and paired trading observations/gi, 'Live source not connected'],
+      [/Dubai time/gi, 'Kyiv time'],
+      [/Example follow-up/gi, 'Required follow-up'],
+      [/The example coverage includes current links, visible offers, product terms, policies and navigation changes\. This offline copy does not inspect those pages\./gi, 'The daily monitor inspects current public links, visible offers, product terms, prices, policies and navigation changes on the official domain.'],
       [/No live business systems are connected to this prototype\./gi, 'Connected production warehouse sources are listed above.'],
       [/\bdemonstration\b/gi, 'live'],
       [/\bfictional\b/gi, 'live'],
@@ -849,6 +851,12 @@
     ];
     var root = document.getElementById('page-content');
     if (!root) return;
+    if (currentPage() === 'competitors') {
+      var competitorDescription = document.getElementById('page-description');
+      if (competitorDescription) competitorDescription.textContent = 'Track daily changes to official competitor rules, prices, offers, policies and public content.';
+      root.querySelectorAll('[data-action="competitor-monitor-toggle"]').forEach(function (button) { button.remove(); });
+      root.querySelectorAll('[data-kind="competitor-monitor"]').forEach(function (button) { button.setAttribute('data-kind', 'competitors'); });
+    }
     [root, document.getElementById('drawer-layer')].filter(Boolean).forEach(function (copyRoot) {
       var walker = document.createTreeWalker(copyRoot, NodeFilter.SHOW_TEXT);
       var node;
@@ -944,7 +952,7 @@
       if (value) value.textContent = 'Unavailable';
     });
     var competitor = root.querySelector('.competitor-monitor,.competitor-page');
-    if (competitor) {
+    if (competitor && !window.BICompetitorMonitorData) {
       if (!competitor.querySelector('.production-missing-source')) competitor.insertAdjacentHTML('afterbegin', '<div class="production-missing-source"><strong>No live data</strong><span>Competitor monitoring source is not connected.</span></div>');
       competitor.querySelectorAll('.cm-kpis article').forEach(function (card) {
         var value = card.querySelector('strong');
@@ -1037,6 +1045,15 @@
   async function start() {
     discardDemoData();
     refreshPresentation();
+    try {
+      var competitorResponse = await fetch(COMPETITOR_ENDPOINT, { cache: 'no-store' });
+      if (competitorResponse.ok) {
+        var competitorPayload = await competitorResponse.json();
+        if (competitorPayload && competitorPayload.mode === 'official-sites') window.BICompetitorMonitorData = competitorPayload;
+      }
+    } catch {
+      window.BICompetitorMonitorData = null;
+    }
     try {
       var manifestResponse = await fetch(STATUS_ENDPOINT, { cache: 'no-store' });
       if (manifestResponse.ok) state.manifest = await manifestResponse.json();
