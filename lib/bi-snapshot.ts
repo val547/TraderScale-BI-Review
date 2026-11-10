@@ -477,7 +477,7 @@ WITH latest_axcera AS (
 SELECT d.commerce_customer_key, d.warehouse_customer_id, d.warehouse_customer_nr,
   d.woocommerce_customer_id, d.full_name, d.country, d.status, d.identity_source,
   d.account_count, d.order_count, d.completed_order_count, d.first_order_at, d.last_order_at,
-  IF(d.warehouse_customer_id IS NOT NULL, a.created_at, d.registered_at) AS registered_at,
+  COALESCE(d.registered_at, a.created_at) AS registered_at,
   d.has_guest_order, d.is_woocommerce_registered, d.refreshed_at,
   d.revenue_usd, d.all_status_order_value_usd, d.kyc_verified
 FROM \`trader-scale-486213.trader_scale.dim_commerce_customers\` AS d
