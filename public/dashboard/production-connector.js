@@ -423,6 +423,35 @@
     return (rows || []).filter(function (row) { return inDateRange(row[field]); });
   }
 
+  function matchesDimensions(row, filters) {
+    filters = filters || {};
+    return (!filters.programme || filters.programme === 'all' || row.programme === filters.programme)
+      && (!filters.country || filters.country === 'all' || row.country === filters.country)
+      && (!filters.channel || filters.channel === 'all' || row.channel === filters.channel)
+      && (!filters.size || filters.size === 'all' || Number(row.accountSize) === Number(filters.size));
+  }
+
+  function filteredOrders(filters, range) {
+    return (state.snapshot.data.orders || []).filter(function (row) {
+      if (!row.revenueEligible || !matchesDimensions(row, filters)) return false;
+      var rowDate = isoDate(row.date);
+      if (!rowDate) return false;
+      return range ? rowDate >= range[0] && rowDate <= range[1] : inDateRange(rowDate);
+    });
+  }
+
+  function previousRange() {
+    if (state.dateAllTime || !state.dateStart || !state.dateEnd) return null;
+    var start = new Date(state.dateStart + 'T00:00:00Z');
+    var end = new Date(state.dateEnd + 'T00:00:00Z');
+    var days = Math.round((end.getTime() - start.getTime()) / 86400000) + 1;
+    var priorEnd = new Date(start.getTime() - 86400000);
+    var priorStart = new Date(priorEnd.getTime() - (days - 1) * 86400000);
+    var result = [priorStart.toISOString().slice(0, 10), priorEnd.toISOString().slice(0, 10)];
+    var available = (state.snapshot.data.orders || []).map(function (row) { return isoDate(row.date); }).filter(Boolean).sort();
+    return available.length && result[0] >= available[0] ? result : null;
+  }
+
   function liveText(value) {
     return value == null || value === '' ? 'No live data' : String(value);
   }
@@ -487,9 +516,10 @@
       }).join('') + '</tbody></table></div></section>';
   }
 
-  function ownerOverviewPage() {
-    var all = (state.snapshot.data.orders || []).filter(function (row) { return row.revenueEligible; });
-    var rows = all.filter(function (row) { return inDateRange(row.date); });
+  function ownerOverviewPage(ctx) {
+    ctx = ctx || {};
+    var filters = ctx.filters || {};
+    var rows = filteredOrders(filters);
     var rowDates = rows.map(function (row) { return row.date; }).filter(Boolean).sort();
     var range = state.dateAllTime
       ? { min: rowDates[0] || dateBounds().min, max: rowDates[rowDates.length - 1] || dateBounds().max }
@@ -505,7 +535,11 @@
       daily[row.date].netRevenue += Number(row.netRevenue) || 0;
     });
     var days = Object.keys(daily).sort().reverse().map(function (key) { return daily[key]; });
-    return liveHeader('Owner overview', rows.length, 'Canonical eligible orders · UTC · USD') + dateToolbar()
+    var tabs = '<div class="owner-tabs" role="group" aria-label="Owner overview views">'
+      + '<button data-action="owner-tab" data-value="performance" class="' + (ctx.local && ctx.local.ownerTab === 'changes' ? '' : 'active') + '">Performance</button>'
+      + '<button data-action="owner-tab" data-value="changes" class="' + (ctx.local && ctx.local.ownerTab === 'changes' ? 'active' : '') + '">What changed?</button></div>';
+    if (ctx.local && ctx.local.ownerTab === 'changes') return tabs + ownerChangesPage(ctx, rows);
+    return tabs + liveHeader('Owner overview', rows.length, 'Canonical eligible orders · current filters · UTC · USD')
       + '<div class="page-kpis">'
       + metric('Net revenue', money(sum(rows, 'netRevenue')), 'Gross revenue less linked refunds')
       + metric('Gross revenue', money(sum(rows, 'grossRevenue')), number(rows.length) + ' eligible orders')
@@ -519,6 +553,49 @@
         + '</td><td class="numeric">' + money(row.grossRevenue) + '</td><td class="numeric">' + money(row.refunded)
         + '</td><td class="numeric"><strong>' + money(row.netRevenue) + '</strong></td></tr>'; }).join('')
       + (days.length ? '' : '<tr><td colspan="5">No live data for this date range.</td></tr>')
+      + '</tbody></table></div></section>';
+  }
+
+  function ownerChangesPage(ctx, currentRows) {
+    var priorRange = previousRange();
+    if (!priorRange) {
+      return liveHeader('What changed?', currentRows.length, 'Canonical eligible orders · current filters · UTC · USD')
+        + '<section class="panel"><div class="panel-body"><div class="no-live-data"><span class="no-live-kicker">COMPARISON UNAVAILABLE</span>'
+        + '<h2>No complete prior period</h2><p>Choose a bounded reporting period with equally long preceding warehouse history. Missing history is not treated as zero.</p></div></div></section>';
+    }
+    var priorRows = filteredOrders(ctx.filters || {}, priorRange);
+    var currentCustomers = new Set(currentRows.map(function (row) { return row.customerId; }).filter(Boolean)).size;
+    var priorCustomers = new Set(priorRows.map(function (row) { return row.customerId; }).filter(Boolean)).size;
+    var currentRevenue = sum(currentRows, 'netRevenue');
+    var priorRevenue = sum(priorRows, 'netRevenue');
+    function delta(current, prior, isMoney) {
+      var value = current - prior;
+      return (value > 0 ? '+' : '') + (isMoney ? money(value) : number(value));
+    }
+    var programmes = {};
+    currentRows.forEach(function (row) {
+      if (!programmes[row.programme]) programmes[row.programme] = { programme: row.programme, current: 0, prior: 0 };
+      programmes[row.programme].current += Number(row.netRevenue) || 0;
+    });
+    priorRows.forEach(function (row) {
+      if (!programmes[row.programme]) programmes[row.programme] = { programme: row.programme, current: 0, prior: 0 };
+      programmes[row.programme].prior += Number(row.netRevenue) || 0;
+    });
+    var movements = Object.keys(programmes).map(function (key) {
+      var row = programmes[key]; row.change = row.current - row.prior; return row;
+    }).sort(function (a, b) { return Math.abs(b.change) - Math.abs(a.change); });
+    return liveHeader('What changed?', currentRows.length, 'Current period compared with the immediately preceding equal-length period')
+      + '<div class="page-kpis">'
+      + metric('Net revenue change', delta(currentRevenue, priorRevenue, true), money(currentRevenue) + ' vs ' + money(priorRevenue))
+      + metric('Order change', delta(currentRows.length, priorRows.length, false), number(currentRows.length) + ' vs ' + number(priorRows.length))
+      + metric('Customer change', delta(currentCustomers, priorCustomers, false), number(currentCustomers) + ' vs ' + number(priorCustomers))
+      + metric('Prior period', humanDate(priorRange[0]) + ' – ' + humanDate(priorRange[1]), 'Complete warehouse comparison window') + '</div>'
+      + '<section class="panel"><div class="panel-header"><div><h2 class="panel-title">Programme movement</h2>'
+      + '<p class="panel-subtitle">The same programme, country, channel and account-size filters are applied to both periods.</p></div></div>'
+      + '<div class="table-wrap"><table class="data-table"><thead><tr><th>Programme</th><th class="numeric">Current</th><th class="numeric">Previous</th><th class="numeric">Change</th></tr></thead><tbody>'
+      + movements.map(function (row) { return '<tr><td>' + escapeHtml(liveText(row.programme)) + '</td><td class="numeric">' + money(row.current)
+        + '</td><td class="numeric">' + money(row.prior) + '</td><td class="numeric"><strong>' + delta(row.current, row.prior, true) + '</strong></td></tr>'; }).join('')
+      + (movements.length ? '' : '<tr><td colspan="4">No live data for these filters.</td></tr>')
       + '</tbody></table></div></section>';
   }
 
@@ -981,7 +1058,7 @@
     finishBoot();
   }
 
-  window.BIProductionConnector = { state: state, applySnapshot: applySnapshot, start: start, inDateRange: inDateRange, dateLabel: dateLabel, dateRange: dateRange, refreshPresentation: refreshPresentation };
+  window.BIProductionConnector = { state: state, applySnapshot: applySnapshot, start: start, inDateRange: inDateRange, dateLabel: dateLabel, dateRange: dateRange, refreshPresentation: refreshPresentation, renderOwnerOverview: ownerOverviewPage };
   document.addEventListener('click', function (event) {
     var pageLink = event.target.closest('[data-page]');
     if (pageLink) {
