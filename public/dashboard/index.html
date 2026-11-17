@@ -2027,9 +2027,19 @@ if (location.protocol === 'file:') document.documentElement.classList.remove('pr
     // Scope by purchased product and customer geography, never by legacy partner attribution.
     const scope={...filters,channel:'all'};
     const orders=ctx.data.filterOrders(scope).filter(order=>!filters.size||filters.size==='all'||order.accountSize===Number(filters.size));
-    const dates=ctx.data.getSeries(scope).map(row=>row.date),orderIds=new Set(orders.map(order=>order.id));
-    const source=window.BIThoughtMetricData,reportChannels=source?source.channels:[];
-    const rows=source?source.rows.filter(row=>orderIds.has(row.orderId)):[];
+    const source=window.BIThoughtMetricData,connector=window.BIProductionConnector;
+    const live=!!(source&&Array.isArray(source.channels)&&!Array.isArray(source.rows));
+    const scoped=filters.programme&&filters.programme!=='all'||filters.country&&filters.country!=='all'||filters.size&&filters.size!=='all';
+    const palette=['#ed7c3c','#536c96','#6098d1','#51a68d','#ad8bc3','#c4a35c','#698b7c','#c47b73'];
+    const liveSourceRows=live&&!scoped?source.channels.filter(row=>!connector||!connector.inDateRange||connector.inDateRange(row.date)).map(row=>({
+      date:row.date,channel:row.channel||'Unknown',revenueCredit:Number(row.canonicalMatchedRevenue)||0,
+      orderCredit:Number(row.attributedOrders)||0
+    })):[];
+    const legacyOrderIds=new Set(orders.map(order=>order.id));
+    const rows=live?liveSourceRows:source&&Array.isArray(source.rows)?source.rows.filter(row=>legacyOrderIds.has(row.orderId)):[];
+    const reportChannels=live?[...new Set(rows.map(row=>row.channel))].sort().map((id,index)=>({id,label:id,color:palette[index%palette.length]})):source&&Array.isArray(source.channels)?source.channels:[];
+    const dates=live?[...new Set(rows.map(row=>row.date))].sort():ctx.data.getSeries(scope).map(row=>row.date);
+    const metadata=live?{provider:source.provider||'ThoughtMetric',status:'Live warehouse attribution',model:source.model||'mixed',currency:source.currency||'USD',timezone:'UTC',revenueBasis:source.revenueBasis||'Canonical matched revenue',asOf:source.coverageEnd||ctx.data.asOf}:source&&source.metadata||null;
     const totalNetSales=sum(rows,'revenueCredit'),totalOrderCredits=sum(rows,'orderCredit');
     const hidden=new Set(Array.isArray(local.hiddenChannels)?local.hiddenChannels:[]);
     const dayMap=new Map(dates.map(date=>[date,Object.fromEntries(reportChannels.map(channel=>[channel.id,{netSales:0,orders:0}]))]));
@@ -2040,13 +2050,14 @@ if (location.protocol === 'file:') document.documentElement.classList.remove('pr
     });
     const visible=items.filter(channel=>channel.visible);
     return {channels:items,dates,orders,creditRows:rows,totalNetSales,totalAttributedRevenue:totalNetSales,totalOrders:orders.length,totalOrderCredits,
-      sourceStatus:source?source.metadata.status:'Example import unavailable',metadata:source?source.metadata:null,
+      sourceStatus:metadata?metadata.status:'Attribution unavailable',metadata,live,scopedUnsupported:live&&scoped,
       importedOrders:new Set(rows.map(row=>row.orderId)).size,ledgerNetSales:sum(orders,'netSales'),
       visible,visibleNetSales:sum(visible,'netSales'),view:local.channelChartView==='split'?'split':'trend'};
   }
 
   function trend(report,ui){
-    if(!report.metadata)return '<div class="channels-empty">'+ui.icon('database',26)+'<h3>Example attribution report unavailable</h3><p>The channel report needs its separate ThoughtMetric example data.</p></div>';
+    if(!report.metadata)return '<div class="channels-empty">'+ui.icon('database',26)+'<h3>Attribution report unavailable</h3><p>No live ThoughtMetric attribution data is available.</p></div>';
+    if(report.scopedUnsupported)return '<div class="channels-empty">'+ui.icon('filter',26)+'<h3>This attribution source does not contain product or country dimensions</h3><p>Reset programme, account-size and country filters to view the live ThoughtMetric channel totals.</p><button class="btn btn-secondary btn-small" data-action="reset-filters">Reset filters</button></div>';
     if(!report.visible.length)return '<div class="channels-empty">'+ui.icon('chart',26)+'<h3>All channel lines are hidden</h3><p>Choose a channel above or show all channels to compare their attributed sales.</p><button class="btn btn-secondary btn-small" data-action="channels-all">Show all channels</button></div>';
     if(!report.totalOrders)return '<div class="channels-empty">'+ui.icon('search',26)+'<h3>No sales in this selection</h3><p>Change the programme, country, channel or reporting period.</p><button class="btn btn-secondary btn-small" data-action="reset-filters">Reset filters</button></div>';
     const W=1120,H=285,P={left:58,right:20,top:18,bottom:39};
@@ -2054,7 +2065,7 @@ if (location.protocol === 'file:') document.documentElement.classList.remove('pr
     const rawMax=Math.max(1,...values),magnitude=Math.pow(10,Math.floor(Math.log10(rawMax))),step=magnitude*(rawMax/magnitude>5?2:rawMax/magnitude>2?1:.5);
     const max=Math.ceil(rawMax/step)*step;
     const x=index=>P.left+index*(W-P.left-P.right)/Math.max(1,report.dates.length-1),y=value=>P.top+(1-value/max)*(H-P.top-P.bottom);
-    const summary='Daily revenue attributed by the fictional ThoughtMetric import, in US dollars. '+report.visible.map(channel=>channel.label+': '+ui.money(channel.netSales)).join('; ')+'.';
+    const summary='Daily canonical matched revenue attributed by ThoughtMetric, in US dollars. '+report.visible.map(channel=>channel.label+': '+ui.money(channel.netSales)).join('; ')+'.';
     let html='<div class="channels-trend"><svg viewBox="0 0 '+W+' '+H+'" role="img" aria-label="'+ui.escape(summary)+'"><title>'+ui.escape(summary)+'</title>';
     for(let i=0;i<=4;i++){const value=max*i/4,yy=y(value);html+='<line x1="'+P.left+'" y1="'+yy.toFixed(1)+'" x2="'+(W-P.right)+'" y2="'+yy.toFixed(1)+'" stroke="#e7ebef" stroke-dasharray="3 5"/><text x="'+(P.left-12)+'" y="'+(yy+4).toFixed(1)+'" text-anchor="end" fill="#8c99a7" font-size="11">'+ui.escape(ui.compact(value))+'</text>';}
     report.visible.forEach(channel=>{
@@ -2073,16 +2084,16 @@ if (location.protocol === 'file:') document.documentElement.classList.remove('pr
   function split(report,ui){
     if(!report.visible.length)return trend(report,ui);
     const max=Math.max(1,...report.channels.map(channel=>channel.netSales));
-    return '<div class="channels-split" role="img" aria-label="'+ui.escape('ThoughtMetric example attributed revenue share by channel. '+report.visible.map(channel=>channel.label+' '+channel.share.toFixed(1)+' percent').join('; '))+'">'+report.visible.map(channel=>'<div class="channels-split-row"><span class="channels-split-name"><i style="background:'+channel.color+'"></i>'+channel.label+'</span><span class="channels-split-track"><i style="background:'+channel.color+';width:'+(channel.netSales/max*100).toFixed(2)+'%"></i></span><span class="channels-split-value"><strong>'+ui.money(channel.netSales)+'</strong><small>'+channel.share.toFixed(1)+'% of attributed revenue</small></span></div>').join('')+'</div>';
+    return '<div class="channels-split" role="img" aria-label="'+ui.escape('ThoughtMetric attributed revenue share by channel. '+report.visible.map(channel=>channel.label+' '+channel.share.toFixed(1)+' percent').join('; '))+'">'+report.visible.map(channel=>'<div class="channels-split-row"><span class="channels-split-name"><i style="background:'+channel.color+'"></i>'+channel.label+'</span><span class="channels-split-track"><i style="background:'+channel.color+';width:'+(channel.netSales/max*100).toFixed(2)+'%"></i></span><span class="channels-split-value"><strong>'+ui.money(channel.netSales)+'</strong><small>'+channel.share.toFixed(1)+'% of attributed revenue</small></span></div>').join('')+'</div>';
   }
 
   function render(ctx){
     const report=getReport(ctx),ui=ctx.ui;
-    return '<section class="panel channels-panel"><div class="panel-header"><div><div class="channels-title"><h2 class="panel-title">Sales by channel</h2><button class="info-button" data-action="channels-method" aria-label="How ThoughtMetric attribution works">'+ui.icon('info',15)+'</button></div><p class="panel-subtitle">ThoughtMetric attribution <span class="channels-source-badge">Demo import</span></p></div><div class="channels-header-actions"><div class="segmented"><button data-action="channels-view" data-value="trend" class="'+(report.view==='trend'?'active':'')+'">Daily trend</button><button data-action="channels-view" data-value="split" class="'+(report.view==='split'?'active':'')+'">Sales split</button></div><button class="icon-button" data-action="export" data-kind="channels" aria-label="Export sales by channel">'+ui.icon('download',17)+'</button></div></div>'+
+    return '<section class="panel channels-panel"><div class="panel-header"><div><div class="channels-title"><h2 class="panel-title">Sales by channel</h2><button class="info-button" data-action="channels-method" aria-label="How ThoughtMetric attribution works">'+ui.icon('info',15)+'</button></div><p class="panel-subtitle">ThoughtMetric attribution <span class="channels-source-badge">'+(report.live?'LIVE':'Unavailable')+'</span></p></div><div class="channels-header-actions"><div class="segmented"><button data-action="channels-view" data-value="trend" class="'+(report.view==='trend'?'active':'')+'">Daily trend</button><button data-action="channels-view" data-value="split" class="'+(report.view==='split'?'active':'')+'">Sales split</button></div><button class="icon-button" data-action="export" data-kind="channels" aria-label="Export sales by channel">'+ui.icon('download',17)+'</button></div></div>'+
       '<div class="channels-cards" aria-label="Toggle channel visibility">'+report.channels.map(channel=>'<button class="channels-card '+(channel.visible?'':'is-hidden')+'" data-action="channels-toggle" data-value="'+ui.escape(channel.id)+'" aria-pressed="'+channel.visible+'" aria-label="'+(channel.visible?'Hide':'Show')+' '+ui.escape(channel.label)+' in the chart"><span class="channels-card-label"><i style="background:'+channel.color+'"></i>'+channel.label+'<span class="channels-visible-mark">'+(channel.visible?ui.icon('check',12):'+')+'</span></span><strong>'+ui.money(channel.netSales)+'</strong><small>'+channel.share.toFixed(1)+'% of attributed revenue</small></button>').join('')+'</div>'+
       '<div class="channels-chart-meta"><span>'+ui.icon(report.view==='trend'?'chart':'database',14)+' '+(report.view==='trend'?'Daily attributed revenue · USD':'Share of attributed revenue')+'</span><div><strong>'+ui.money(report.totalNetSales)+'</strong> report total <span class="channels-meta-dot">·</span> <button data-action="channels-all" class="text-link">All channels</button></div></div>'+
       (report.view==='trend'?trend(report,ui):split(report,ui))+
-      '<div class="panel-footer channels-footer"><span>'+report.visible.length+' of '+report.channels.length+' channels visible'+(report.visible.length<report.channels.length?' · '+ui.money(report.visibleNetSales)+' shown':'')+' · Affiliate code credit is reviewed separately</span><button class="text-link" data-action="channels-method">Example multi-touch · not connected '+ui.icon('info',13)+'</button></div></section>';
+      '<div class="panel-footer channels-footer"><span>'+report.visible.length+' of '+report.channels.length+' channels visible'+(report.visible.length<report.channels.length?' · '+ui.money(report.visibleNetSales)+' shown':'')+' · Affiliate code credit is reviewed separately</span><button class="text-link" data-action="channels-method">'+(report.live?'Live '+ui.escape(report.metadata.model||'mixed')+' attribution':'Attribution unavailable')+' '+ui.icon('info',13)+'</button></div></section>';
   }
 
   function exportRows(ctx){
@@ -2094,8 +2105,12 @@ if (location.protocol === 'file:') document.documentElement.classList.remove('pr
 
   function methodDetail(ctx){
     const r=getReport(ctx),u=ctx.ui,m=r.metadata||{},source=window.BIThoughtMetricData;
+    if(r.live)return {title:'Sales channel attribution',subtitle:'ThoughtMetric · live warehouse data',
+      html:'<p class="muted">The Owner overview uses the released ThoughtMetric attribution views from the production warehouse.</p><section class="detail-section"><h3>Source and calculation</h3><div class="detail-grid">'+
+      '<div class="detail-item"><span>Source</span><strong>'+u.escape(m.provider||'ThoughtMetric')+'</strong></div><div class="detail-item"><span>Model</span><strong>'+u.escape(m.model||'mixed')+'</strong></div><div class="detail-item"><span>Reporting currency</span><strong>'+u.escape(m.currency||'USD')+'</strong></div><div class="detail-item"><span>Reporting timezone</span><strong>'+u.escape(m.timezone||'UTC')+'</strong></div></div><p><strong>Revenue basis:</strong> '+u.escape(m.revenueBasis||'Canonical matched revenue')+'.</p><p class="small muted">Daily channel totals are filtered by the reporting period. The released aggregate does not contain programme, account-size or customer-country dimensions, so those filters are not applied to this chart.</p></section><section class="detail-section"><h3>Current selection</h3><div class="detail-grid"><div class="detail-item"><span>Attributed revenue</span><strong>'+u.money(r.totalAttributedRevenue)+'</strong></div><div class="detail-item"><span>Attributed order credits</span><strong>'+r.totalOrderCredits.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})+'</strong></div><div class="detail-item"><span>Channels</span><strong>'+u.number(r.channels.length)+'</strong></div><div class="detail-item"><span>Coverage through</span><strong>'+u.escape(m.asOf||'—')+'</strong></div></div></section>',
+      footer:'<button class="btn btn-secondary" data-action="close-overlay">Close</button>'};
     const example=m.exampleOrderId?ctx.data.orders.find(order=>order.id===m.exampleOrderId):null;
-    const exampleCredits=example&&source?source.rows.filter(row=>row.orderId===example.id):[];
+    const exampleCredits=example&&source&&Array.isArray(source.rows)?source.rows.filter(row=>row.orderId===example.id):[];
     const partner=example?ctx.data.affiliates.find(affiliate=>affiliate.id===example.affiliateId):null;
     const item=(label,value)=>'<div class="detail-item"><span>'+u.escape(label)+'</span><strong>'+u.escape(String(value))+'</strong></div>';
     return {title:'Sales channel attribution',subtitle:'ThoughtMetric · '+r.sourceStatus,
