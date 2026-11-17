@@ -3214,11 +3214,13 @@ if (location.protocol !== 'file:') document.documentElement.classList.add('produ
     const sizes=[...new Set((data.accountSizes||[5000,10000,25000,50000,100000,200000]).map(Number).filter(n=>Number.isFinite(n)&&n>0))].sort((a,b)=>a-b);
     const programme=programmes.includes(l.pricingProgramme)?l.pricingProgramme:(programmes.includes('Pro')?'Pro':programmes[0]);
     const size=sizes.includes(Number(l.pricingSize))?Number(l.pricingSize):(sizes.includes(100000)?100000:sizes[0]);
-    const raw={};Object.keys(defaults).forEach(key=>raw[key]=l[keyFor(key)]===undefined?defaults[key]:l[keyFor(key)]);
-    const mode=['example','history','custom'].includes(l.pricingMode)?l.pricingMode:'example';
-    const history=historyFor(ctx,programme,size),result=calculate(raw);
+    const history=historyFor(ctx,programme,size),production=!!data.productionQuality,hasSavedInputs=Object.keys(defaults).some(key=>l[keyFor(key)]!==undefined);
+    const liveDefaults=history.available?{currentPrice:history.averageNetSales,currentProfit:history.averageProfit,proposedPrice:'',feeRate:'',discount:'',targetProfit:'',volume:history.orders,costBuffer:''}:{};
+    const raw={};Object.keys(defaults).forEach(key=>raw[key]=l[keyFor(key)]!==undefined?l[keyFor(key)]:production?(history.available?liveDefaults[key]:''):defaults[key]);
+    const mode=production&&!hasSavedInputs?(history.available?'history':'custom'):['example','history','custom'].includes(l.pricingMode)?l.pricingMode:'example';
+    const result=calculate(raw);
     return {programme,size,programmes,sizes,raw,inputs:result.inputs,mode,history,result,valid:result.valid,errors:result.errors,rows:result.rows,range:history.range,
-      sourceLabel:mode==='history'?'Sample product history':mode==='custom'?'Custom assumptions':'Your example',historyError:clean(l.pricingHistoryError)};
+      sourceLabel:mode==='history'?(production?'Live product history':'Sample product history'):mode==='custom'?'Custom assumptions':'Your example',historyError:clean(l.pricingHistoryError)};
   }
 
   function option(u,value,label,current){return '<option value="'+u.escape(value)+'"'+(String(value)===String(current)?' selected':'')+'>'+u.escape(label)+'</option>';}
@@ -3980,6 +3982,9 @@ if (location.protocol !== 'file:') document.documentElement.classList.add('produ
     return round(days) + ' days';
   }
   function range(period) {
+    if (window.BIProductionConnector && window.BIProductionConnector.state && window.BIProductionConnector.state.mode === 'production') {
+      return window.BIProductionConnector.dateRange();
+    }
     return period === '7d' ? ['2026-10-19', '2026-10-25'] : period === 'lastmonth' ? ['2026-09-01', '2026-09-25'] : period === '90d' ? ['2026-09-01', '2026-10-25'] : ['2026-10-01', '2026-10-25'];
   }
   function purchaseTime(order) {
@@ -4043,6 +4048,65 @@ if (location.protocol !== 'file:') document.documentElement.classList.add('produ
     return successful && newChallenge(order) && amount(order.netSales) > 0 && amount(order.refund) === 0 && amount(order.chargeback) === 0;
   }
   function buildHistory(data) {
+    if (Array.isArray(data.productionRebuy)) {
+      var signature = String(data.asOf || '') + ':' + data.productionRebuy.length + ':' + data.orders.length + ':' + data.accounts.length;
+      if (history && historySource === signature) return history;
+      historySource = signature;
+      var liveAccounts = Object.create(null), accountsByLogin = Object.create(null), liveCustomers = Object.create(null), liveOrders = Object.create(null);
+      data.accounts.forEach(function (account) { liveAccounts[account.id] = account; accountsByLogin[String(account.login)] = account; });
+      data.customers.forEach(function (customer) { liveCustomers[customer.id] = customer; });
+      var livePurchases = data.orders.map(function (order) {
+        var purchasedAt = Date.parse(String(order.date || '').slice(0, 10) + 'T12:00:00Z');
+        var item = { id: order.id, customerId: order.customerId, accountId: order.accountId, programme: order.programme, accountSize: order.accountSize,
+          purchasedAt: purchasedAt, netSales: amount(order.netSales), order: order, type: 'New challenge', eligible: Number.isFinite(purchasedAt) && amount(order.netSales) > 0, synthetic: false };
+        liveOrders[order.id] = item; return item;
+      });
+      var asOf = Date.parse(String(data.asOf || '').slice(0, 10) + 'T23:59:59.999Z');
+      if (!Number.isFinite(asOf)) asOf = Date.now();
+      AS_OF = asOf;
+      var events = [], candidates = [];
+      data.productionRebuy.forEach(function (source, index) {
+        var breachedAt = Date.parse(source.breachedAt);
+        if (!Number.isFinite(breachedAt)) return;
+        var breachedAccount = liveAccounts[source.accountId] || accountsByLogin[String(source.accountNr)] || {
+          id: source.accountId || 'live-account-' + index, login: source.accountNr || '', customerId: source.customerId,
+          customerName: source.customerName, programme: source.programme, accountSize: source.accountSize,
+          country: source.country, channel: 'Unknown', stage: 'Breached', status: 'Breached'
+        };
+        var event = { id: 'live-breach-' + (source.accountId || source.accountNr || index), customerId: source.customerId,
+          accountId: breachedAccount.id, breachedAt: breachedAt, verifiedAt: breachedAt, programme: source.programme,
+          accountSize: source.accountSize, reason: 'Recorded account breach', synthetic: false };
+        events.push(event);
+        var rebuyKey = source.rebuyStoreId && source.rebuyOrderId ? source.rebuyStoreId + ':' + source.rebuyOrderId : '';
+        var rebuy = rebuyKey ? liveOrders[rebuyKey] : null;
+        if (!rebuy && source.rebuyAt) {
+          var rebuyAt = Date.parse(source.rebuyAt);
+          rebuy = { id: rebuyKey || 'live-rebuy-' + index, customerId: source.customerId, accountId: '', programme: source.plan || source.programme,
+            accountSize: source.accountSize, purchasedAt: rebuyAt, netSales: amount(source.rebuyRevenue),
+            order: { id: rebuyKey || 'live-rebuy-' + index, customerId: source.customerId, programme: source.plan || source.programme,
+              accountSize: source.accountSize, date: String(source.rebuyAt).slice(0, 10), netSales: amount(source.rebuyRevenue),
+              discount: null, refund: 0, chargeback: 0 }, type: 'New challenge', eligible: Number.isFinite(rebuyAt), synthetic: false };
+        }
+        var rebuyAccount = rebuy ? liveAccounts[rebuy.accountId] || Object.values(liveAccounts).find(function (account) { return account.orderId === rebuy.id; }) || {
+          id: rebuy.accountId || '', login: '', customerId: source.customerId, programme: rebuy.programme, accountSize: rebuy.accountSize
+        } : null;
+        var lagDays = source.rebuyDays == null ? null : Number(source.rebuyDays);
+        candidates.push({ id: source.customerId, customerId: source.customerId,
+          customerName: source.customerName || liveCustomers[source.customerId] && liveCustomers[source.customerId].name || breachedAccount.customerName,
+          country: source.country || breachedAccount.country, channel: breachedAccount.channel || 'Unknown', breach: event,
+          breachedAccount: breachedAccount, rebuy: rebuy, rebuyAccount: rebuyAccount, lagDays: Number.isFinite(lagDays) ? lagDays : null,
+          followupDays: Math.max(0, (asOf - breachedAt) / DAY),
+          sizeChange: rebuy ? rebuy.accountSize > breachedAccount.accountSize ? 'Higher' : rebuy.accountSize < breachedAccount.accountSize ? 'Lower' : 'Same' : 'Not yet',
+          programmeChanged: !!(rebuy && rebuy.programme !== breachedAccount.programme), excludedOrders: [], priorBreaches: 1, synthetic: false });
+      });
+      var latest = Object.create(null);
+      candidates.forEach(function (row) { if (!latest[row.customerId] || row.breach.breachedAt > latest[row.customerId].breach.breachedAt) latest[row.customerId] = row; });
+      var rows = Object.keys(latest).map(function (key) {
+        var row = latest[key]; row.priorBreaches = events.filter(function (event) { return event.customerId === key; }).length; return row;
+      });
+      history = { purchases: livePurchases, events: events, rows: rows, accounts: liveAccounts, asOf: asOf };
+      return history;
+    }
     if (history && historySource === data) return history;
     historySource = data;
     var accounts = Object.create(null), customers = Object.create(null), orders = Object.create(null), byCustomer = Object.create(null);
@@ -4792,6 +4856,7 @@ if (location.protocol !== 'file:') document.documentElement.classList.add('produ
   const syntheticCache = new WeakMap();
 
   function entries(ctx) {
+    if(ctx.data&&ctx.data.productionQuality)return [];
     const values = Array.isArray(ctx.local.businessUpdates) ? ctx.local.businessUpdates : defaultUpdates;
     return values.filter(item => item && typeof item.id === 'string' && validDate(item.date)).map(item => ({
       id:item.id,title:String(item.title || 'Untitled update'),category:categories[item.category] ? item.category : 'operations',date:item.date,
@@ -6447,9 +6512,15 @@ if (location.protocol !== 'file:') document.documentElement.classList.add('produ
   }
 
   function rulesFor(ctx) {
+    const production=!!ctx.data.productionQuality;
     const source = ctx.local.consistencyRules || {};
     const rules = {};
     ctx.data.programmes.forEach(programme => {
+      if(production){
+        const limits=(ctx.data.accounts||[]).filter(account=>account.programme===programme&&validScore(account.consistencyLimit)&&Number(account.consistencyLimit)>=1&&Number(account.consistencyLimit)<=100).map(account=>Number(account.consistencyLimit));
+        rules[programme]=limits.length?{mode:'applies',limit:limits[0]}:{mode:'unconfigured',limit:40};
+        return;
+      }
       const fallback = defaultRules[programmeFamilyFor(programme,ctx)] || {mode:'unconfigured',limit:40};
       const rule = source[programme] || fallback;
       rules[programme] = {
@@ -6470,7 +6541,8 @@ if (location.protocol !== 'file:') document.documentElement.classList.add('produ
     const excluded = {unconfigured:[],notApplicable:[],nonPositive:[],missing:[]};
     const accounts = [];
     scoped.forEach(account => {
-      const rule = rules[account.programme] || {mode:'unconfigured',limit:40};
+      const recordedLimit=validScore(account.consistencyLimit)&&Number(account.consistencyLimit)>=1&&Number(account.consistencyLimit)<=100?Number(account.consistencyLimit):null;
+      const rule = ctx.data.productionQuality&&recordedLimit!==null?{mode:'applies',limit:recordedLimit}:rules[account.programme] || {mode:'unconfigured',limit:40};
       if(rule.mode === 'unconfigured'){excluded.unconfigured.push(account);return;}
       if(rule.mode === 'none'){excluded.notApplicable.push(account);return;}
       if(!Number.isFinite(Number(account.realizedPnl)) || Number(account.realizedPnl) <= 0){excluded.nonPositive.push(account);return;}
@@ -9819,7 +9891,7 @@ document.getElementById('filters-row').hidden=noFilters;document.querySelector('
 document.getElementById('filters-row').innerHTML=filterControl('programme','programmes',D.programmes)+((retentionView||profitableRiskView||payoutSnapshotView||['accounts','revenue','affiliates','pipeline','payouts','rebuy','updates','reports'].includes(page))?'<div class="filter-control"><label class="sr-only" for="filter-size">Account size</label><select id="filter-size" data-filter="size">'+option('all','All account sizes',filters.size)+D.accountSizes.map(n=>option(String(n),money(n),String(filters.size))).join('')+'</select></div>':'')+filterControl('country','countries',D.countries)+(['overview','ltv'].includes(page)?'':filterControl('channel','channels',D.channels))+'<span class="currency-label">USD</span><div class="filter-tail">'+(Object.values(filters).some((v,i)=>i>0&&v!=='all')?'<button class="reset-filters" data-action="reset-filters">'+icon('x',13)+' Reset</button>':'')+'<span class="period-context">'+(monthlyRevenue?'First purchase filters · value through 25 Oct 2026':page==='ltv'?'Acquisition cohort · choose dates below':profitableRiskView?'Current trader portfolios · 25 Oct 2026':retentionView?'Current customer portfolios · 25 Oct 2026':page==='pipeline'?'Payouts & outcomes · choose dates below':payoutSnapshotView?'Current portfolio · 25 Oct 2026':page==='updates'?'Windows relative to the selected update':accountAnalyticsView?'Current active accounts · 25 Oct 2026':page==='accounts'?'Opened '+dateLabel():page==='rebuy'?'Breach cohort · '+dateLabel():dateLabel()+' · Dubai time')+'</span></div>';
 const periodSelect=document.getElementById('date-period'),snapshotPeriod=payoutSnapshotView||accountAnalyticsView||retentionView||profitableRiskView;if(periodSelect){periodSelect.innerHTML=snapshotPeriod?option('snapshot','Snapshot · 25 Oct 2026','snapshot'):page==='updates'?option('update','By update date','update'):option('mtd','1–25 Oct 2026',filters.period)+option('7d','Last 7 days',filters.period)+option('lastmonth','1–25 Sep 2026',filters.period)+option('90d','All demo history',filters.period);periodSelect.value=snapshotPeriod?'snapshot':page==='updates'?'update':filters.period;periodSelect.disabled=snapshotPeriod||page==='updates';}
 const ctx={data:D,filters,metrics:D.getMetrics(filters),ui:window.BIUI,local,page,workspacePages:navItems.map(item=>item[0])};
-const fn={'client-profit':ctx=>ctx.data.productionQuality?(ctx.data.productionQuality.revenueReady&&ctx.data.productionQuality.customersReady?window.BIWarehouseReports.clientProfit(ctx):window.BIWarehouseReports.missing(ctx)):window.BIClientProfit.render(ctx),competitors:ctx=>window.BICompetitorMonitor.render(ctx),pricing:ctx=>window.BIPricing.render(ctx),'profitable-risk':ctx=>ctx.data.productionQuality?(ctx.data.productionQuality.withdrawableReady?window.BIWarehouseReports.profitableRisk(ctx):window.BIWarehouseReports.missing(ctx)):window.BIProfitableRisk.render(ctx),journey:ctx=>ctx.data.productionQuality?(ctx.data.productionQuality.journeyReady?window.BIWarehouseReports.journey(ctx):window.BIWarehouseReports.missing(ctx)):journeyWorkspace(ctx),ltv:window.BIOwnerValue.renderReport,marketing:window.BIPaidMarketing.render,reports:window.BIReports.render,overview:ctx=>ctx.data.productionQuality&&window.BIProductionConnector&&window.BIProductionConnector.renderOwnerOverview?window.BIProductionConnector.renderOwnerOverview(ctx):window.BIWarehouseReports.missing(ctx),revenue:window.BIEconomics.renderProfitability,affiliates:affiliateWorkspace,pipeline:ctx=>window.BIPayoutHistory.render(ctx),'risk-radar':ctx=>ctx.data.productionQuality?(ctx.data.productionQuality.riskFindingsReady?window.BIWarehouseReports.risk(ctx):window.BIWarehouseReports.missing(ctx)):window.BIRiskRules.render(ctx),'payout-exposure':ctx=>ctx.data.productionQuality?(ctx.data.productionQuality.withdrawableReady?window.BIWarehouseReports.exposure(ctx):window.BIWarehouseReports.missing(ctx)):window.BIPayoutPatterns.render(ctx),'payout-consistency':ctx=>ctx.data.productionQuality?(ctx.data.productionQuality.withdrawableReady?window.BIWarehouseReports.consistency(ctx):window.BIWarehouseReports.missing(ctx)):window.BIPayoutConsistency.render(ctx),rebuy:ctx=>ctx.data.productionQuality?(ctx.data.productionQuality.rebuyReady?window.BIWarehouseReports.rebuy(ctx):window.BIWarehouseReports.missing(ctx)):window.BIRebuy.render(ctx),accounts:accountWorkspace,updates:window.BIUpdates.render,health:health,settings:settings}[page]||window.BIPages[page];
+const fn={'client-profit':window.BIClientProfit.render,competitors:ctx=>window.BICompetitorMonitor.render(ctx),pricing:ctx=>window.BIPricing.render(ctx),'profitable-risk':window.BIProfitableRisk.render,journey:journeyWorkspace,ltv:window.BIOwnerValue.renderReport,marketing:window.BIPaidMarketing.render,reports:window.BIReports.render,overview:ownerOverview,revenue:window.BIEconomics.renderProfitability,affiliates:affiliateWorkspace,pipeline:ctx=>window.BIPayoutHistory.render(ctx),'risk-radar':window.BIRiskRules.render,'payout-exposure':window.BIPayoutPatterns.render,'payout-consistency':window.BIPayoutConsistency.render,rebuy:window.BIRebuy.render,accounts:accountWorkspace,updates:window.BIUpdates.render,health:health,settings:settings}[page]||window.BIPages[page];
 document.getElementById('page-content').innerHTML=fn(ctx);
 if(['pricing','marketing','rebuy','updates','ltv','client-profit','journey','profitable-risk','risk-radar','payout-exposure','payout-consistency'].includes(page))document.getElementById('page-content').insertAdjacentHTML('afterbegin','<button class="reports-back-link" data-page="reports">'+icon('arrow',14)+' All reports</button>');
 document.querySelector('.export-button').dataset.kind=retentionView?'retention':page==='journey'?'customers':monthlyRevenue?'monthly-cohorts':page==='ltv'?'owner-value':page==='affiliates'&&local.affiliatesView!=='reports'?'affiliate-growth':accountAnalyticsView?'account-analytics':page==='pipeline'?'payout-history':page==='payout-exposure'?'payout-patterns':page==='payout-consistency'?'consistency':page==='overview'&&local.ownerTab==='changes'?'changes':page;
@@ -9861,7 +9933,7 @@ return '<div class="owner-primary-kpis">'+metric({label:'Net sales',value:money(
 window.BIOwnerValue.renderOverview(ctx)+
 '<section class="panel overview-wide-chart"><div class="panel-header"><div><h2 class="panel-title">Net sales & profit before overheads</h2><p class="panel-subtitle">Daily totals from sales and allocated direct costs · USD</p></div><div class="overview-chart-actions"><button class="text-link" data-action="owner-calculation">How is this calculated? '+icon('info',14)+'</button><button class="btn btn-ghost btn-small" data-page="revenue">View report '+icon('arrow',14)+'</button></div></div><div class="chart-legend"><span><i class="legend-dot orange"></i>Net sales</span><span><i class="legend-dot slate"></i>Profit before overheads</span></div><div class="panel-body chart-body">'+chart(D.getSeries(filters))+'</div></section>'+
 window.BIChannels.render(ctx)+window.BIOwnerAffiliates.render(ctx)+
-'<div class="overview-grid owner-secondary-grid"><section class="panel"><div class="panel-header"><div><h2 class="panel-title">Product performance</h2><p class="panel-subtitle">Every programme, on the same basis</p></div><button class="text-link" data-page="revenue">Explore profitability '+icon('arrow',14)+'</button></div><div class="table-wrap"><table class="data-table"><thead><tr><th>Programme</th><th class="numeric">Net sales</th><th class="numeric">Profit before overheads</th><th class="numeric">Margin</th><th></th></tr></thead><tbody>'+products.map(p=>'<tr><td><button class="table-link product-label" data-action="product" data-value="'+esc(p.name)+'"><span class="product-dot product-'+esc(p.name.toLowerCase())+'"></span>'+esc(p.name)+'</button></td><td class="numeric">'+money(p.netSales)+'</td><td class="numeric">'+money(p.contribution)+'</td><td class="numeric">'+percent(p.margin)+'</td><td><button class="row-action" data-action="product" data-value="'+esc(p.name)+'" aria-label="Explore '+esc(p.name)+'">'+icon('arrow',15)+'</button></td></tr>').join('')+'</tbody></table></div><div class="panel-footer"><span>Profit excludes general overheads and tax</span><button class="text-link" data-action="definition" data-id="contribution">How is this calculated? '+icon('info',13)+'</button></div></section>'+window.BIOwnerPayouts.render(ctx)+'</div>'+window.BIProfitableRisk.renderOverview(ctx);
+'<div class="overview-grid owner-secondary-grid"><section class="panel"><div class="panel-header"><div><h2 class="panel-title">Product performance</h2><p class="panel-subtitle">Every programme, on the same basis</p></div><button class="text-link" data-page="revenue">Explore profitability '+icon('arrow',14)+'</button></div><div class="table-wrap"><table class="data-table"><thead><tr><th>Programme</th><th class="numeric">Net sales</th><th class="numeric">Profit before overheads</th><th class="numeric">Margin</th><th></th></tr></thead><tbody>'+products.map(p=>'<tr><td><button class="table-link product-label" data-action="product" data-value="'+esc(p.name)+'"><span class="product-dot product-'+esc(p.name.toLowerCase())+'"></span>'+esc(p.name)+'</button></td><td class="numeric">'+money(p.netSales)+'</td><td class="numeric">'+(p.contribution==null?'Unavailable':money(p.contribution))+'</td><td class="numeric">'+(p.margin==null?'Unavailable':percent(p.margin))+'</td><td><button class="row-action" data-action="product" data-value="'+esc(p.name)+'" aria-label="Explore '+esc(p.name)+'">'+icon('arrow',15)+'</button></td></tr>').join('')+'</tbody></table></div><div class="panel-footer"><span>Profit excludes general overheads and tax</span><button class="text-link" data-action="definition" data-id="contribution">How is this calculated? '+icon('info',13)+'</button></div></section>'+window.BIOwnerPayouts.render(ctx)+'</div>'+window.BIProfitableRisk.renderOverview(ctx);
 }
 function overviewCalculation(){
   const report=window.BIOverviewData.getCalculation(context()),m=report.totals;

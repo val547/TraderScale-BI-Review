@@ -167,6 +167,7 @@
       });
     }
     function total(rows, field) { return rows.reduce(function (value, row) { return value + (Number(row[field]) || 0); }, 0); }
+    function knownNumber(value) { return value !== null && value !== undefined && String(value).trim() !== '' && Number.isFinite(Number(value)); }
     function selectedAffiliatePnl(filters, range) {
       filters = filters || {};
       return (data.affiliatePnl || []).filter(function (row) {
@@ -179,31 +180,46 @@
     data.filterOrders = selected;
     data.getMetrics = function (filters) {
       var rows = selected(filters);
+      var contributionKnown = rows.length > 0 && rows.every(function (row) { return knownNumber(row.contribution); });
+      var commissionKnown = rows.length > 0 && rows.every(function (row) { return knownNumber(row.commission); });
+      var payoutKnown = rows.length > 0 && rows.every(function (row) { return knownNumber(row.payoutCost); });
       return {
-        netSales: total(rows, 'netSales'), contribution: null, refunds: total(rows, 'refund'), chargebacks: total(rows, 'chargeback'),
-        commissions: null, acquisitionCosts: null, pspFees: null, platformCosts: null, payoutCosts: null,
+        netSales: total(rows, 'netSales'), contribution: contributionKnown ? total(rows, 'contribution') : null, refunds: total(rows, 'refund'), chargebacks: total(rows, 'chargeback'),
+        commissions: commissionKnown ? total(rows, 'commission') : null, acquisitionCosts: null, pspFees: null, platformCosts: null, payoutCosts: payoutKnown ? total(rows, 'payoutCost') : null,
         grossSales: total(rows, 'grossSales'), discounts: total(rows, 'discount'), orders: rows.length,
         newCustomers: new Set(rows.filter(function (row) { return row.isNewCustomer; }).map(function (row) { return row.customerId; })).size,
         customers: new Set(rows.map(function (row) { return row.customerId; }).filter(Boolean)).size,
-        liveCostCoverage: false
+        liveCostCoverage: contributionKnown
       };
     };
     data.getSeries = function (filters) {
       var buckets = {};
       selected(filters).forEach(function (row) {
-        if (!buckets[row.date]) buckets[row.date] = { date: row.date, netSales: 0, contribution: null };
+        if (!buckets[row.date]) buckets[row.date] = { date: row.date, netSales: 0, contribution: 0, contributionKnown: true };
         buckets[row.date].netSales += row.netSales;
+        if (knownNumber(row.contribution)) buckets[row.date].contribution += Number(row.contribution);
+        else buckets[row.date].contributionKnown = false;
       });
-      return Object.keys(buckets).sort().map(function (key) { return buckets[key]; });
+      return Object.keys(buckets).sort().map(function (key) {
+        var bucket = buckets[key];
+        return { date: bucket.date, netSales: bucket.netSales, contribution: bucket.contributionKnown ? bucket.contribution : null };
+      });
     };
     data.getProducts = function (filters) {
       var groups = {};
       selected(filters).forEach(function (row) {
-        if (!groups[row.programme]) groups[row.programme] = { name: row.programme, netSales: 0, contribution: null, orders: 0, margin: null };
+        if (!groups[row.programme]) groups[row.programme] = { name: row.programme, netSales: 0, contribution: 0, contributionKnown: true, orders: 0, margin: null };
         groups[row.programme].netSales += row.netSales;
+        if (knownNumber(row.contribution)) groups[row.programme].contribution += Number(row.contribution);
+        else groups[row.programme].contributionKnown = false;
         groups[row.programme].orders += 1;
       });
-      return Object.keys(groups).map(function (key) { return groups[key]; }).sort(function (a, b) { return b.netSales - a.netSales; });
+      return Object.keys(groups).map(function (key) {
+        var group = groups[key];
+        if (!group.contributionKnown) group.contribution = null;
+        group.margin = group.contribution !== null && group.netSales ? group.contribution / group.netSales * 100 : null;
+        return group;
+      }).sort(function (a, b) { return b.netSales - a.netSales; });
     };
     data.getAffiliates = function (filters, range) {
       return data.affiliates.map(function (affiliate) {
@@ -308,6 +324,190 @@
         available: true, complete: false, illustrative: false, sourceNote: 'Live recorded rejection decisions.' };
     };
     window.BIThoughtMetricData = window.BIData.productionMarketing || null;
+    if (window.BIRetentionQueueData) window.BIRetentionQueueData.getData = function (data) {
+      var asOf = data.asOf || state.snapshot && state.snapshot.asOf || '';
+      var snapshotEnd = Date.parse(asOf + 'T23:59:59.999Z');
+      var purchases = (data.orders || []).map(function (row) {
+        var purchasedAt = Date.parse(String(row.date || '').slice(0, 10) + 'T12:00:00Z');
+        return {
+          id: row.id, customerId: row.customerId, accountId: row.accountId,
+          programme: row.programme, accountSize: row.accountSize, purchasedAt: purchasedAt,
+          netSales: row.netSales, order: row, type: 'New challenge',
+          eligible: Number.isFinite(purchasedAt) && Number(row.netSales) > 0 && !Number(row.refund) && !Number(row.chargeback),
+          synthetic: false, source: 'Production canonical orders'
+        };
+      });
+      var breaches = (data.productionRebuy || []).map(function (row, index) {
+        var breachedAt = Date.parse(row.breachedAt);
+        return {
+          id: 'live-breach-' + (row.accountId || row.accountNr || index),
+          customerId: row.customerId, accountId: row.accountId,
+          breachedAt: breachedAt, verifiedAt: breachedAt,
+          programme: row.programme, accountSize: row.accountSize,
+          reason: 'Recorded account breach', source: 'Production breach-to-rebuy report', synthetic: false
+        };
+      }).filter(function (row) { return Number.isFinite(row.breachedAt); });
+      var coverageByCustomer = {};
+      (data.customers || []).forEach(function (customer) {
+        var registrationKnown = !!customer.registeredAt;
+        coverageByCustomer[customer.id] = {
+          accountsComplete: true, purchasesComplete: true, breachesComplete: true,
+          registrationKnown: registrationKnown, source: 'Production warehouse', observedAt: snapshotEnd,
+          notes: 'Canonical customer, account, order and breach-to-rebuy sources.'
+        };
+      });
+      var customers = (data.customers || []).map(function (customer) {
+        return Object.assign({}, customer, {
+          registeredAt: customer.registeredAt || null, registrationKnown: !!customer.registeredAt,
+          portfolioComplete: true, orderHistoryComplete: true, breachHistoryComplete: true,
+          source: 'Production warehouse', isScenario: false
+        });
+      });
+      return {
+        snapshot: asOf, asOf: asOf, snapshotEnd: snapshotEnd,
+        customers: customers, orders: data.orders || [], accounts: data.accounts || [],
+        purchases: purchases, breaches: breaches, registrations: [],
+        coverageByCustomer: coverageByCustomer, scenarioCustomerIds: [],
+        sourceNote: 'Live canonical customers, accounts, orders and breach-to-rebuy records.',
+        completenessNote: 'Missing evidence remains unassessed; no illustrative retention cases are included.'
+      };
+    };
+    if (window.BIRiskRulesData) {
+      var riskModel = window.BIRiskRulesData;
+      var riskRuleId = function (value) {
+        var key = String(value || '').toLowerCase().replace(/[_\s]+/g, '-');
+        if (key.includes('martingale')) return 'martingale';
+        if (key.includes('grid')) return 'grid';
+        if (key.includes('adding') && key.includes('drawdown')) return 'adding-drawdown';
+        if (key.includes('one-sided') || key.includes('concentration')) return 'one-sided';
+        if (key.includes('automation') || key === 'ea' || key.includes('expert-advisor')) return 'automation';
+        if (key.includes('hedge')) return 'hedge';
+        if (key.includes('daily') && (key.includes('loss') || key.includes('drawdown'))) return 'daily-loss';
+        return '';
+      };
+      var liveRiskReport = function (ctx) {
+        var settings = riskModel.settingsFor(ctx), filters = ctx.filters || {}, local = ctx.local || {};
+        var definitions = {};
+        riskModel.definitionList.forEach(function (item) { definitions[item.id] = item; });
+        var accountById = {}, accountByLogin = {};
+        (ctx.data.accounts || []).forEach(function (account) { accountById[account.id] = account; accountByLogin[String(account.login)] = account; });
+        var grouped = {};
+        (ctx.data.productionRiskFindings || []).forEach(function (finding) {
+          var rule = riskRuleId(finding.rule);
+          if (!rule || !definitions[rule]) return;
+          var account = accountById[finding.accountId] || accountByLogin[String(finding.accountNr)] || null;
+          if (!account) return;
+          if (filters.programme && filters.programme !== 'all' && account.programme !== filters.programme) return;
+          if (filters.country && filters.country !== 'all' && account.country !== filters.country) return;
+          if (filters.channel && filters.channel !== 'all' && account.channel !== filters.channel) return;
+          if (filters.size && filters.size !== 'all' && Number(account.accountSize) !== Number(filters.size)) return;
+          if (!grouped[account.id]) grouped[account.id] = { account: account, findings: [] };
+          grouped[account.id].findings.push({ finding: finding, rule: rule });
+        });
+        var accounts = Object.keys(grouped).map(function (id) {
+          var group = grouped[id], account = group.account;
+          var alerts = group.findings.map(function (item) {
+            var finding = item.finding, definition = definitions[item.rule];
+            return {
+              ruleId: item.rule, title: definition.title, value: null,
+              displayValue: finding.evidence || 'Recorded live finding',
+              thresholdText: 'Production detector result',
+              description: finding.evidence || 'The production detector recorded this account for review.',
+              source: 'Production risk detector', observedAt: finding.findingAt,
+              priority: /urgent|critical|high/i.test(String(finding.severity || '')) ? 'Urgent' : 'Review',
+              evidence: [
+                { label: 'Detector rule', value: finding.rule || item.rule },
+                { label: 'Symbol', value: finding.symbol || 'Not recorded' },
+                { label: 'Evidence', value: finding.evidence || 'Recorded finding' }
+              ]
+            };
+          });
+          var signature = alerts.map(function (item) { return item.ruleId + ':' + item.observedAt; }).sort().join('|');
+          var review = local.riskRuleReviews && local.riskRuleReviews[id] || {};
+          var reviewStatus = review.signature === signature && ['New', 'In review', 'Explained'].includes(review.status) ? review.status : 'New';
+          var realised = Number.isFinite(Number(account.realizedPnl)) ? Number(account.realizedPnl) : null;
+          var open = Number.isFinite(Number(account.openPnl)) ? Number(account.openPnl) : null;
+          var profit = realised === null || open === null ? null : realised + open;
+          return {
+            id: account.id, login: account.login, customerId: account.customerId, customerName: account.customerName,
+            country: account.country, programme: account.programme, accountSize: account.accountSize,
+            stage: account.stage, channel: account.channel, profit: profit, realised: realised, open: open,
+            rewardExposure: Number.isFinite(Number(account.payoutAccrued)) ? Number(account.payoutAccrued) : null,
+            dailyHeadroom: null, priority: alerts.some(function (item) { return item.priority === 'Urgent'; }) ? 'Urgent' : 'Review',
+            reviewStatus: reviewStatus, reviewNote: String(review.note || ''), reviewChanged: !!review.signature && review.signature !== signature,
+            signature: signature, alerts: alerts
+          };
+        });
+        accounts.sort(function (a, b) { return Number(b.priority === 'Urgent') - Number(a.priority === 'Urgent') || String(b.alerts[0] && b.alerts[0].observedAt || '').localeCompare(String(a.alerts[0] && a.alerts[0].observedAt || '')); });
+        var uniqueClients = new Set(accounts.map(function (account) { return account.customerId; }).filter(Boolean));
+        var rewardKnown = accounts.filter(function (account) { return account.rewardExposure !== null; });
+        var rewardExposure = rewardKnown.reduce(function (total, account) { return total + account.rewardExposure; }, 0);
+        var openAccounts = accounts.filter(function (account) { return account.reviewStatus !== 'Explained'; });
+        var allLive = (ctx.data.accounts || []).filter(function (account) {
+          return (!filters.programme || filters.programme === 'all' || account.programme === filters.programme)
+            && (!filters.country || filters.country === 'all' || account.country === filters.country)
+            && (!filters.channel || filters.channel === 'all' || account.channel === filters.channel)
+            && (!filters.size || filters.size === 'all' || Number(account.accountSize) === Number(filters.size));
+        });
+        var rules = riskModel.definitionList.map(function (definition) {
+          var matched = accounts.filter(function (account) { return account.alerts.some(function (alert) { return alert.ruleId === definition.id; }); });
+          var needsReview = matched.filter(function (account) { return account.reviewStatus !== 'Explained'; });
+          var assessed = matched.length;
+          return Object.assign({}, definition, settings.rules[definition.id], {
+            thresholdText: 'Production detector result', assessedCount: assessed,
+            unassessedCount: Math.max(0, allLive.length - assessed), matchedCount: matched.length,
+            needsReviewCount: needsReview.length,
+            urgentCount: needsReview.filter(function (account) { return account.alerts.some(function (alert) { return alert.ruleId === definition.id && alert.priority === 'Urgent'; }); }).length,
+            rewardExposure: matched.reduce(function (total, account) { return total + (account.rewardExposure || 0); }, 0),
+            rewardUnknown: matched.filter(function (account) { return account.rewardExposure === null; }).length
+          });
+        });
+        var query = settings.search.toLowerCase();
+        var rows = accounts.filter(function (account) {
+          return (settings.selectedRule === 'all' || account.alerts.some(function (alert) { return alert.ruleId === settings.selectedRule; }))
+            && (settings.status === 'all' || settings.status === 'open' && account.reviewStatus !== 'Explained' || account.reviewStatus === settings.status)
+            && (settings.priority === 'all' || account.priority === settings.priority)
+            && (!query || [account.id, account.login, account.customerId, account.customerName, account.programme, account.country].concat(account.alerts.map(function (alert) { return alert.title; })).join(' ').toLowerCase().includes(query));
+        });
+        return {
+          settings: settings,
+          summary: { liveAccounts: allLive.length, flaggedAccounts: accounts.length, flaggedClients: uniqueClients.size,
+            openAccounts: openAccounts.length, urgentAccounts: openAccounts.filter(function (account) { return account.priority === 'Urgent'; }).length,
+            rewardExposure: rewardExposure, rewardUnknown: accounts.length - rewardKnown.length,
+            tradeCoverage: accounts.length, dailyCoverage: rules.find(function (rule) { return rule.id === 'daily-loss'; }).matchedCount },
+          rules: rules, accounts: accounts, rows: rows,
+          snapshot: ctx.data.asOf, observedAt: ctx.data.asOf,
+          policyStatus: 'Production detector findings · programme policies remain separate',
+          scopeNote: 'Current production detector findings. Programme, account size, country and channel filters apply.',
+          coverageNote: 'Only recorded live detector findings are displayed. Missing evidence is unassessed, never clear.',
+          priorityNote: 'Priority follows the recorded detector severity.',
+          rewardNote: 'Known current withdrawable exposure is shown when released by the warehouse.'
+        };
+      };
+      riskModel.getReport = liveRiskReport;
+      riskModel.getAccount = function (id, ctx) { return liveRiskReport(ctx).accounts.find(function (account) { return account.id === id; }) || null; };
+      riskModel.exportRows = function (ctx) {
+        var report = liveRiskReport(ctx);
+        return report.rows.flatMap(function (account) { return account.alerts.map(function (alert) {
+          return { AccountId: account.id, Login: account.login, CustomerId: account.customerId, Customer: account.customerName,
+            Programme: account.programme, Stage: account.stage, AccountSizeUSD: account.accountSize, Country: account.country,
+            Channel: account.channel, RuleId: alert.ruleId, Rule: alert.title, Evidence: alert.displayValue,
+            AlertPriority: alert.priority, ObservedAt: alert.observedAt, Source: alert.source, Snapshot: report.snapshot };
+        }); });
+      };
+    }
+    if (window.BIRiskRadarData) {
+      window.BIRiskRadarData.getReport = function () {
+        return {
+          clusters: [], allClusters: [], accountAlerts: {}, rows: [], chartRows: [],
+          sources: [], summary: {clusters: 0, high: 0, elevated: 0, watch: 0, accounts: 0, clients: 0},
+          coverage: {accounts: 0, clients: 0}, settings: {}, scope: null
+        };
+      };
+      window.BIRiskRadarData.getCluster = function () { return null; };
+      window.BIRiskRadarData.getAccountAlerts = function () { return []; };
+      window.BIRiskRadarData.exportRows = function () { return []; };
+    }
   }
 
   function applySnapshot(payload) {
@@ -317,11 +517,47 @@
     discardDemoData();
     state.snapshot = payload;
     var adapted = adaptSnapshotData(payload);
-    replaceArray(window.BIData.accounts, data.accounts);
+    var withdrawableByAccount = {};
+    ((data.withdrawable && data.withdrawable.accounts) || []).forEach(function (row) {
+      if (row.accountId) withdrawableByAccount[String(row.accountId)] = row;
+      if (row.accountNr) withdrawableByAccount['login:' + String(row.accountNr)] = row;
+    });
+    var liveAccounts = data.accounts.map(function (account) {
+      var released = withdrawableByAccount[String(account.id)] || withdrawableByAccount['login:' + String(account.login)] || null;
+      if (!released) return account;
+      return Object.assign({}, account, {
+        payoutAccrued: released.estimatedWithdrawable,
+        payoutApproved: released.pendingPayout,
+        consistency: released.consistencyActual,
+        consistencyLimit: released.consistencyRequired,
+        tradingDays: released.tradingDaysActual,
+        tradingDaysRequired: released.tradingDaysRequired,
+        withdrawableStatus: released.primaryStatus,
+        withdrawableCoverageKnown: released.coverageKnown,
+        withdrawableWarnings: released.coverageWarnings,
+        riskLevel: released.riskDetectionCount > 0 || !['', 'normal', 'clear', 'none'].includes(String(released.riskState || '').toLowerCase()) ? 'High' : 'Normal',
+        riskReason: released.riskDetectionCount > 0
+          ? released.riskDetectionCount + ' live detector finding' + (released.riskDetectionCount === 1 ? '' : 's') + '; state ' + released.riskState + '.'
+          : 'Released risk state: ' + released.riskState + '.'
+      });
+    });
+    replaceArray(window.BIData.accounts, liveAccounts);
     replaceArray(window.BIData.payouts, data.payouts);
     replaceArray(window.BIData.orders, adapted.orders);
     replaceArray(window.BIData.affiliates, adapted.affiliates);
     replaceArray(window.BIData.customers, adapted.customers);
+    replaceArray(window.BIData.riskCases, (data.riskFindings || []).map(function (finding) {
+      return {
+        id: finding.id || (finding.rule + ':' + finding.accountNr),
+        customerId: finding.customerId, customerName: finding.customerName,
+        accountId: finding.accountId, account: finding.accountNr,
+        programme: finding.programme, accountSize: finding.accountSize,
+        country: finding.country, channel: finding.channel,
+        type: finding.rule, severity: finding.severity, status: 'Needs review',
+        openedAt: finding.findingAt, rule: finding.rule,
+        evidence: [finding.evidence, finding.symbol ? 'Symbol: ' + finding.symbol : ''].filter(Boolean)
+      };
+    }));
     window.BIData.affiliatePnl = adapted.affiliatePnl.slice();
     window.BIData.productionProfitability = Array.isArray(data.profitability) ? data.profitability.slice() : [];
     window.BIData.productionMarketing = data.marketing && typeof data.marketing === 'object' ? data.marketing : null;
@@ -847,11 +1083,6 @@
     var page = currentPage();
     var dateControl = document.querySelector('.date-control');
     if (!dateControl || state.mode !== 'production') return;
-    var unavailablePages = new Set(['pricing', 'updates']);
-    if (unavailablePages.has(page)) {
-      var unavailableContent = document.getElementById('page-content');
-      if (unavailableContent && !unavailableContent.querySelector('.no-live-data')) unavailableContent.innerHTML = noLiveDataPage(page);
-    }
     var legacyFilters = document.getElementById('filters-row');
     if (legacyFilters) legacyFilters.hidden = page === 'marketing' || page === 'journey';
     var currentOnlyPages = new Set(['profitable-risk', 'payout-exposure', 'payout-consistency']);
