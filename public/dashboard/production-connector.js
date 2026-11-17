@@ -6,7 +6,7 @@
   var SNAPSHOT_ENDPOINT = '/api/bi/snapshot';
   var state = {
     mode: 'loading', manifest: null, snapshot: null, error: null,
-    dateStart: '', dateEnd: '', dateAllTime: true, datePickerOpen: false, pendingAllTime: true
+    dateStart: '', dateEnd: '', dateAllTime: true, datePickerOpen: false, pendingAllTime: true, dateBoundsCache: null
   };
   var DATA_PAGES = new Set([
     'overview', 'revenue', 'accounts', 'pipeline', 'affiliates', 'competitors',
@@ -567,6 +567,7 @@
     if (!Array.isArray(data.accounts) || !Array.isArray(data.payouts)) return false;
     discardDemoData();
     state.snapshot = payload;
+    state.dateBoundsCache = null;
     var adapted = adaptSnapshotData(payload);
     var withdrawableByAccount = {};
     ((data.withdrawable && data.withdrawable.accounts) || []).forEach(function (row) {
@@ -699,23 +700,17 @@
   }
 
   function dateBounds() {
+    if (state.dateBoundsCache) return state.dateBoundsCache;
     var data = state.snapshot ? state.snapshot.data : {};
-    var values = [];
-    (data.orders || []).forEach(function (row) { if (isoDate(row.date)) values.push(isoDate(row.date)); });
-    (data.accounts || []).forEach(function (row) { if (isoDate(row.openedAt)) values.push(isoDate(row.openedAt)); });
-    (data.payouts || []).forEach(function (row) { if (isoDate(row.requestedAt)) values.push(isoDate(row.requestedAt)); });
-    (data.profitability || []).forEach(function (row) { if (isoDate(row.date)) values.push(isoDate(row.date)); });
-    (data.affiliates || []).forEach(function (row) { if (isoDate(row.date)) values.push(isoDate(row.date)); });
-    ((data.marketing && data.marketing.channels) || []).forEach(function (row) { if (isoDate(row.date)) values.push(isoDate(row.date)); });
-    ((data.marketing && data.marketing.campaigns) || []).forEach(function (row) { if (isoDate(row.date)) values.push(isoDate(row.date)); });
-    (data.customers || []).forEach(function (row) { if (isoDate(row.registeredAt)) values.push(isoDate(row.registeredAt)); });
-    (data.rebuy || []).forEach(function (row) { if (isoDate(row.breachedAt)) values.push(isoDate(row.breachedAt)); });
-    (data.riskFindings || []).forEach(function (row) { if (isoDate(row.findingAt)) values.push(isoDate(row.findingAt)); });
-    values.sort();
+    var min = '', max = '';
+    function include(rows, field) { (rows || []).forEach(function (row) { var value = isoDate(row[field]); if (!value) return; if (!min || value < min) min = value; if (!max || value > max) max = value; }); }
+    include(data.orders, 'date');include(data.accounts, 'openedAt');include(data.payouts, 'requestedAt');include(data.profitability, 'date');include(data.affiliates, 'date');
+    include(data.marketing && data.marketing.channels, 'date');include(data.marketing && data.marketing.campaigns, 'date');include(data.customers, 'registeredAt');include(data.rebuy, 'breachedAt');include(data.riskFindings, 'findingAt');
     var fallback = state.snapshot && state.snapshot.asOf
       ? state.snapshot.asOf
       : new Date().toISOString().slice(0, 10);
-    return { min: values[0] || fallback, max: values[values.length - 1] || fallback };
+    state.dateBoundsCache = { min: min || fallback, max: max || fallback };
+    return state.dateBoundsCache;
   }
 
   function inDateRange(value) {
