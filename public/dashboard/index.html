@@ -6438,11 +6438,19 @@ if (location.protocol !== 'file:') document.documentElement.classList.add('produ
   const validScore = value => value !== null && value !== undefined && String(value).trim() !== '' && Number.isFinite(Number(value)) && Number(value) >= 0;
   const option = (u,value,label,current) => '<option value="' + u.escape(value) + '"' + (String(value) === String(current) ? ' selected' : '') + '>' + u.escape(label) + '</option>';
 
+  function programmeFamilyFor(programme,ctx) {
+    const account = (ctx.data.accounts || []).find(row => row.programme === programme);
+    const recorded = String(account && account.programmeFamily || '').trim();
+    if (defaultRules[recorded]) return recorded;
+    const label = String(programme || '').split('·')[0].trim().toLowerCase();
+    return Object.keys(defaultRules).find(key => label === key.toLowerCase() || label.startsWith(key.toLowerCase())) || '';
+  }
+
   function rulesFor(ctx) {
     const source = ctx.local.consistencyRules || {};
     const rules = {};
     ctx.data.programmes.forEach(programme => {
-      const fallback = defaultRules[programme] || {mode:'unconfigured',limit:40};
+      const fallback = defaultRules[programmeFamilyFor(programme,ctx)] || {mode:'unconfigured',limit:40};
       const rule = source[programme] || fallback;
       rules[programme] = {
         mode:['applies','none','unconfigured'].includes(rule.mode) ? rule.mode : fallback.mode,
