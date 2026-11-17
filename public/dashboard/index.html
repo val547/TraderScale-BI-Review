@@ -7073,6 +7073,7 @@ if (location.protocol === 'file:') document.documentElement.classList.remove('pr
   const dimensions=[{key:'partner',label:'Partners'},{key:'country',label:'Countries'},{key:'partnerCountry',label:'Partner × country'}];
   const defaultThresholds={minOrders:10,minMargin:20,growthPct:10,dropPct:10};
   const CHART_PAGE_SIZE=10;
+  const riskReportCache=typeof WeakMap==='function'?new WeakMap():null;
   const option=(u,key,label,value)=>'<option value="'+u.escape(key)+'"'+(String(key)===String(value)?' selected':'')+'>'+u.escape(label)+'</option>';
   const signed=(u,value)=>value==null?'—':(value>0?'+':'')+u.money(value);
   const percent=v=>v==null?'—':num(v).toFixed(1)+'%';
@@ -7240,7 +7241,9 @@ if (location.protocol === 'file:') document.documentElement.classList.remove('pr
     const relevant=[...current,...previous],orderLookup=new Map(data.orders.map(o=>[o.id,o]));
     const activeAccounts=(data.accounts||[]).filter(a=>a.status==='Active'&&matches(a,f)).map(a=>({account:a,order:orderLookup.get(a.orderId)})).filter(x=>x.order&&affiliates.has(x.order.affiliateId)&&(settings.trafficType==='all'||typeFor(x.order)===settings.trafficType));
     const activeAccountGroups=groupIndex(activeAccounts.map(item=>Object.assign(item,{affiliateId:item.order.affiliateId,country:item.order.country})));
-    const risk=window.BIRiskRadarData?window.BIRiskRadarData.getReport({...ctx,filters:{programme:'all',size:'all',country:'all',channel:'all'},local:{...ctx.local,radarScope:null,radarStatus:'all',radarPriority:'all',radarSearch:''}}):null;
+    const riskKey=JSON.stringify([(ctx.local||{}).radarRules||null,(ctx.local||{}).radarReviews||null]);let riskEntry=riskReportCache&&riskReportCache.get(data);
+    if(!riskEntry||riskEntry.key!==riskKey){const value=window.BIRiskRadarData?window.BIRiskRadarData.getReport({...ctx,filters:{programme:'all',size:'all',country:'all',channel:'all'},local:{...ctx.local,radarScope:null,radarStatus:'all',radarPriority:'all',radarSearch:''}}):null;riskEntry={key:riskKey,value};if(riskReportCache)riskReportCache.set(data,riskEntry);}
+    const risk=riskEntry.value;
     const alertsByAccount=risk?risk.accountAlerts:{};
     const build=(kind,affiliateId,country)=>{
       const a=affiliates.get(affiliateId),currentRows=rowsFor(currentGroups,kind,affiliateId,country),priorRows=rowsFor(priorGroups,kind,affiliateId,country);
@@ -9932,7 +9935,7 @@ document.getElementById('page-content').innerHTML=pageHtml;
 if(['pricing','marketing','rebuy','updates','ltv','client-profit','journey','profitable-risk','risk-radar','payout-exposure','payout-consistency'].includes(page))document.getElementById('page-content').insertAdjacentHTML('afterbegin','<button class="reports-back-link" data-page="reports">'+icon('arrow',14)+' All reports</button>');
 document.querySelector('.export-button').dataset.kind=retentionView?'retention':page==='journey'?'customers':monthlyRevenue?'monthly-cohorts':page==='ltv'?'owner-value':page==='affiliates'&&local.affiliatesView!=='reports'?'affiliate-growth':accountAnalyticsView?'account-analytics':page==='pipeline'?'payout-history':page==='payout-exposure'?'payout-patterns':page==='payout-consistency'?'consistency':page==='overview'&&local.ownerTab==='changes'?'changes':page;
 if(window.BIProductionConnector&&window.BIProductionConnector.refreshPresentation)window.BIProductionConnector.refreshPresentation();
-const elapsed=performance.now()-renderStarted;renderTimings.push({page,elapsed,cacheHit,at:Date.now()});if(renderTimings.length>100)renderTimings.shift();
+const elapsed=performance.now()-renderStarted;document.documentElement.dataset.lastRenderMs=elapsed.toFixed(1);document.documentElement.dataset.lastRenderPage=page;document.documentElement.dataset.lastRenderCache=cacheHit?'hit':'miss';renderTimings.push({page,elapsed,cacheHit,at:Date.now()});if(renderTimings.length>100)renderTimings.shift();
 }
 function go(next){const retired=!!retiredPages[next];next=resolvePage(next);if(retired)history.replaceState(null,'','#'+next);if(next==='accounts'&&page!=='accounts'){local.accountAnalyticsExpanded=false;local.previousFinancialPeriod=filters.period;filters.period='90d';}else if(page==='accounts'&&next!=='accounts'){filters.period=local.previousFinancialPeriod||'mtd';}if(!['accounts','revenue','affiliates','pipeline','payouts','rebuy','updates','journey','profitable-risk','risk-radar','payout-exposure','payout-consistency'].includes(next)||(next==='journey'&&local.journeyView==='portfolios'))filters.size='all';page=next;if(location.hash.slice(1)!==next)history.pushState(null,'','#'+next);closeSearch();closeOverlays();closeMenu();render();window.scrollTo({top:0,behavior:'instant'});}
 function journeyWorkspace(ctx){const active=local.journeyView==='portfolios'?'portfolios':'retention';return '<div class="owner-tabs" role="group" aria-label="Customer journey views">'+[['retention','Retention & churn'],['portfolios','Customer portfolios']].map(([key,label])=>'<button data-action="journey-view" data-value="'+key+'" class="'+(active===key?'active':'')+'" aria-pressed="'+(active===key)+'">'+label+'</button>').join('')+'</div>'+(active==='retention'?window.BICustomerRetention.render(ctx):window.BIPages.journey(ctx));}
