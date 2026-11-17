@@ -1200,9 +1200,11 @@
     }
     [root, document.getElementById('drawer-layer')].filter(Boolean).forEach(function (copyRoot) {
       var walker = document.createTreeWalker(copyRoot, NodeFilter.SHOW_TEXT);
+      var relevantCopy = /(demo|fiction|sample|paid payout|paid cash|cash paid|settled payment|settlement date|Dubai time|Example follow-up|No live business systems)/i;
       var node;
       while ((node = walker.nextNode())) {
         var value = node.nodeValue;
+        if (!relevantCopy.test(value)) continue;
         replacements.forEach(function (item) { value = value.replace(item[0], item[1]); });
         if (value !== node.nodeValue) node.nodeValue = value;
       }
@@ -1441,9 +1443,7 @@
   document.addEventListener('click', function (event) {
     var pageLink = event.target.closest('[data-page]');
     if (pageLink) {
-      // The dashboard router uses history.pushState(), which does not emit a
-      // hashchange event. Re-apply the production view after its render pass.
-      setTimeout(refreshPresentation, 0);
+      // The dashboard render calls refreshPresentation synchronously.
       return;
     }
     var preset = event.target.closest('[data-production-preset]');
@@ -1460,7 +1460,12 @@
       return;
     }
     var button = event.target.closest('[data-production-action]');
-    if (!button) { setTimeout(refreshPresentation, 0); return; }
+    if (!button) {
+      // Main page renders refresh themselves. A deferred copy pass is only
+      // needed for drawers and overlays created without a full page render.
+      if (event.target.closest('[data-action]')) setTimeout(sanitizeProductionCopy, 0);
+      return;
+    }
     var action = button.getAttribute('data-production-action');
     if (action === 'toggle-date-picker') {
       state.datePickerOpen = !state.datePickerOpen;
@@ -1494,17 +1499,6 @@
     var summary = document.getElementById('live-date-summary');
     if (summary && start && end && start.value && end.value) summary.textContent = humanDate(start.value) + ' – ' + humanDate(end.value);
   });
-  document.addEventListener('change', function () { setTimeout(refreshPresentation, 0); });
-  window.addEventListener('hashchange', function () { setTimeout(refreshPresentation, 0); });
-  var refreshScheduled = false;
-  new MutationObserver(function () {
-    if (refreshScheduled) return;
-    refreshScheduled = true;
-    setTimeout(function () {
-      refreshScheduled = false;
-      refreshPresentation();
-    }, 0);
-  }).observe(document.documentElement, { childList: true, subtree: true });
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start);
   else start();
 })();
