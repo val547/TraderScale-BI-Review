@@ -9846,6 +9846,10 @@ let filters={period:'mtd',programme:'all',size:'all',country:'all',channel:'all'
 const pageHtmlCache=new Map();
 const renderTimings=[];
 let dataRevision=0;
+function cacheLocalState(target){
+  const prefixes={overview:['owner','showComparisons'],revenue:['econ'],affiliates:['affiliates','affgrowth','econAff','radar'],accounts:['accounts','accountAnalytics','consistency'],pipeline:['payoutHistory'],reports:['reports'],'client-profit':['clientProfit'],journey:['journey','retention'],ltv:['ownerValue'],marketing:['channels'],pricing:['pricing'],'profitable-risk':['profitableRisk'],'risk-radar':['riskRule','radar'],'payout-exposure':['payoutPattern'],'payout-consistency':['consistency'],rebuy:['rebuy'],updates:['updates'],health:[],settings:['compact','showComparisons']}[target]||[target];
+  const result={};Object.keys(local).forEach(key=>{if(prefixes.some(prefix=>key===prefix||key.startsWith(prefix)))result[key]=local[key];});return result;
+}
 Object.assign(local,{flagRules:Array.isArray(saved.flagRules)?saved.flagRules:[],riskTab:'clients',clientRiskSearch:'',clientRiskFilter:'all',clientRiskPage:0,accountView:'size',accountSearch:'',accountStage:'all',accountRisk:'all',accountPage:0,profitMovePct:1,eligibleSharePct:60});
 Object.assign(local,{ownerTab:'performance',changesDimension:'programme',ownerReviews:saved.ownerReviews||{},accountsTab:'analytics',affiliatesView:'growth',journeyView:'retention',retentionSettings:saved.retentionSettings||{watchDays:3,highDays:7,rebuyDays:7},fundingView:'radar',radarRules:saved.radarRules||JSON.parse(JSON.stringify(window.BIRiskRadarData.defaultRules)),radarReviews:saved.radarReviews||{},riskRuleSettings:saved.riskRuleSettings||JSON.parse(JSON.stringify(window.BIRiskRulesData.defaultRules)),riskRuleReviews:saved.riskRuleReviews||{},consistencyRules:saved.consistencyRules||JSON.parse(JSON.stringify(window.BIPayoutConsistency.defaultRules)),payoutPatternsMinAccounts:saved.payoutPatternSettings?.minAccounts??10,payoutPatternsMinClients:saved.payoutPatternSettings?.minClients??5,payoutPatternsThreshold:saved.payoutPatternSettings?.threshold??1.5,businessUpdates:Array.isArray(saved.businessUpdates)?saved.businessUpdates:JSON.parse(JSON.stringify(window.BIUpdates.defaultUpdates))});
 local.clientProfitActions=Array.isArray(saved.clientProfitActions)?saved.clientProfitActions:JSON.parse(JSON.stringify(window.BIClientProfitActions.defaultActions));
@@ -9927,7 +9931,7 @@ const periodSelect=document.getElementById('date-period'),snapshotPeriod=payoutS
 const ctx={data:D,filters,metrics:D.getMetrics(filters),ui:window.BIUI,local,page,workspacePages:navItems.map(item=>item[0])};
 const fn={'client-profit':window.BIClientProfit.render,competitors:ctx=>window.BICompetitorMonitor.render(ctx),pricing:ctx=>window.BIPricing.render(ctx),'profitable-risk':window.BIProfitableRisk.render,journey:journeyWorkspace,ltv:window.BIOwnerValue.renderReport,marketing:window.BIPaidMarketing.render,reports:window.BIReports.render,overview:ownerOverview,revenue:window.BIEconomics.renderProfitability,affiliates:affiliateWorkspace,pipeline:ctx=>window.BIPayoutHistory.render(ctx),'risk-radar':window.BIRiskRules.render,'payout-exposure':window.BIPayoutPatterns.render,'payout-consistency':window.BIPayoutConsistency.render,rebuy:window.BIRebuy.render,accounts:accountWorkspace,updates:window.BIUpdates.render,health:health,settings:settings}[page]||window.BIPages[page];
 const liveRange=window.BIProductionConnector&&window.BIProductionConnector.dateRange?window.BIProductionConnector.dateRange():null;
-const cacheKey=page==='competitors'?null:JSON.stringify([dataRevision,D.asOf,D.demo,page,filters,local,liveRange]);
+const cacheKey=page==='competitors'?null:JSON.stringify([dataRevision,D.asOf,D.demo,page,filters,cacheLocalState(page),liveRange]);
 const computeStarted=performance.now();
 let pageHtml=cacheKey&&pageHtmlCache.get(cacheKey);
 const cacheHit=pageHtml!==undefined&&pageHtml!==null;
