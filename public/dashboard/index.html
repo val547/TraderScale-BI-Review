@@ -7230,14 +7230,22 @@ if (location.protocol === 'file:') document.documentElement.classList.remove('pr
     const componentsFor=(index,kind,affiliateId,country)=>!index?undefined:kind==='partner'?(index.partner.get(affiliateId)||[]):kind==='country'?(index.country.get(country)||[]):kind==='partnerCountry'?(index.pair.get(affiliateId+'|'+country)||[]):index.all;
     const componentsByDay=new Map();
     [currentComponents,priorComponents].filter(Boolean).forEach(index=>index.byDay.forEach((rows,day)=>componentsByDay.set(day,rows)));
+    const groupIndex=rows=>{
+      const result={all:rows,partner:new Map(),country:new Map(),pair:new Map()},add=(map,key,row)=>{if(!map.has(key))map.set(key,[]);map.get(key).push(row);};
+      rows.forEach(row=>{add(result.partner,row.affiliateId,row);add(result.country,row.country,row);add(result.pair,row.affiliateId+'|'+row.country,row);});
+      return result;
+    };
+    const currentGroups=groupIndex(current),priorGroups=groupIndex(previous);
+    const rowsFor=(index,kind,affiliateId,country)=>kind==='partner'?(index.partner.get(affiliateId)||[]):kind==='country'?(index.country.get(country)||[]):kind==='partnerCountry'?(index.pair.get(affiliateId+'|'+country)||[]):index.all;
     const relevant=[...current,...previous],orderLookup=new Map(data.orders.map(o=>[o.id,o]));
     const activeAccounts=(data.accounts||[]).filter(a=>a.status==='Active'&&matches(a,f)).map(a=>({account:a,order:orderLookup.get(a.orderId)})).filter(x=>x.order&&affiliates.has(x.order.affiliateId)&&(settings.trafficType==='all'||typeFor(x.order)===settings.trafficType));
+    const activeAccountGroups=groupIndex(activeAccounts.map(item=>Object.assign(item,{affiliateId:item.order.affiliateId,country:item.order.country})));
     const risk=window.BIRiskRadarData?window.BIRiskRadarData.getReport({...ctx,filters:{programme:'all',size:'all',country:'all',channel:'all'},local:{...ctx.local,radarScope:null,radarStatus:'all',radarPriority:'all',radarSearch:''}}):null;
     const alertsByAccount=risk?risk.accountAlerts:{};
     const build=(kind,affiliateId,country)=>{
-      const match=o=>(!affiliateId||o.affiliateId===affiliateId)&&(!country||o.country===country),a=affiliates.get(affiliateId);
-       const c=totals(current.filter(match),windows.current,firstPurchases,data,componentsFor(currentComponents,kind,affiliateId,country)),p=windows.comparable?totals(previous.filter(match),windows.prior,firstPurchases,data,componentsFor(priorComponents,kind,affiliateId,country)):null;
-      const accounts=activeAccounts.filter(x=>match(x.order)).map(x=>x.account),alerts=[...new Map(accounts.flatMap(account=>(alertsByAccount[account.id]||[])).map(alert=>[alert.id,alert])).values()];
+      const a=affiliates.get(affiliateId),currentRows=rowsFor(currentGroups,kind,affiliateId,country),priorRows=rowsFor(priorGroups,kind,affiliateId,country);
+       const c=totals(currentRows,windows.current,firstPurchases,data,componentsFor(currentComponents,kind,affiliateId,country)),p=windows.comparable?totals(priorRows,windows.prior,firstPurchases,data,componentsFor(priorComponents,kind,affiliateId,country)):null;
+      const accounts=rowsFor(activeAccountGroups,kind,affiliateId,country).map(x=>x.account),alerts=[...new Map(accounts.flatMap(account=>(alertsByAccount[account.id]||[])).map(alert=>[alert.id,alert])).values()];
       const salesChange=windows.comparable&&p.netSales>0?(c.netSales-p.netSales)/p.netSales*100:null;
       const rowTypes=[...new Set([...c.rawOrders,...(p?p.rawOrders:[])].map(typeFor))],commonType=a?(a.trafficType||'traditional'):rowTypes.length===1?rowTypes[0]:'all';
       const row={id:groupId(kind,affiliateId,country),kind,affiliateId:affiliateId||'',country:country||'',name:kind==='country'?country:kind==='partnerCountry'?a.name+' · '+country:a.name,
