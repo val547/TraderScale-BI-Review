@@ -2669,6 +2669,7 @@ if (location.protocol === 'file:') document.documentElement.classList.remove('pr
     const pnlSource = Array.isArray(ctx.data.affiliatePnl) ? ctx.data.affiliatePnl : [];
     const live = window.BIProductionConnector;
     if (pnlSource.length && ctx.data.productionQuality && ctx.data.productionQuality.affiliatePnlReady) {
+      const orderMap=new Map((ctx.data.orders||[]).map(order=>[String(order.id),order]));
       const selected = pnlSource.filter(row =>
         (!live || !live.inDateRange || live.inDateRange(row.date)) &&
         (!ctx.filters.programme || ctx.filters.programme === 'all' || row.programme === ctx.filters.programme) &&
@@ -2686,7 +2687,7 @@ if (location.protocol === 'file:') document.documentElement.classList.remove('pr
         const complete=rows.every(row=>row.amountKnown!==false);
         const profit=cents(netSales-commissions-rewardCost);
         const orderIds=new Set(revenueRows.map(row=>String(row.storeId)+':'+String(row.orderId)));
-        const rawOrders=(ctx.data.orders||[]).filter(order=>orderIds.has(order.id));
+        const rawOrders=[...orderIds].map(id=>orderMap.get(id)).filter(Boolean);
         return {orders:orderIds.size,customers:new Set(revenueRows.map(row=>row.customerId).filter(Boolean)).size,
           newCustomers:new Set(revenueRows.filter(row=>row.customerType==='new').map(row=>row.customerId).filter(Boolean)).size,
           repeatCustomers:new Set(revenueRows.filter(row=>row.customerType==='existing').map(row=>row.customerId).filter(Boolean)).size,
@@ -6829,9 +6830,8 @@ if (location.protocol === 'file:') document.documentElement.classList.remove('pr
     const realised = number(account.realizedPnl);
     if (realised === null || realised <= 0) return {...base,code:'profit-data',label:realised === null ? 'Realised P&L unavailable' : 'Needs realised profit',note:'A consistency score needs positive realised profit; open P&L does not establish that.'};
     if (base.score === null || base.score < 0) return {...base,score:null,code:'score-data',label:'Score unavailable',note:'A valid recorded consistency score is required.'};
-    const shared = window.BIPayoutConsistency && window.BIPayoutConsistency.accountSummary ? window.BIPayoutConsistency.accountSummary(account.id,ctx) : null;
-    if (!shared || !shared.meaningful || typeof shared.within !== 'boolean') return {...base,label:'Consistency unavailable',note:'The shared consistency report cannot assess this account.'};
-    return {...base,score:shared.score,limit:shared.limit,clear:shared.within,passed:shared.within,assessed:true,code:shared.within ? 'passed' : 'failed',label:shared.within ? 'Within rule' : 'At / above limit',note:'Recorded score must be strictly below ' + shared.limit + '%.'};
+    const within=base.score<base.limit;
+    return {...base,clear:within,passed:within,assessed:true,code:within ? 'passed' : 'failed',label:within ? 'Within rule' : 'At / above limit',note:'Recorded score must be strictly below ' + base.limit + '%.'};
   }
 
   function assess(account, ctx, rules) {
