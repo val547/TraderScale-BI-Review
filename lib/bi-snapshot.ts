@@ -437,26 +437,6 @@ LEFT JOIN top_symbols AS s USING (account_id)
 GROUP BY t.account_id
 `;
 
-const AFFILIATES_SQL = `
-WITH eligible_orders AS (
-  SELECT store_id, order_id, order_reporting_date, gross_revenue_usd, net_revenue_usd
-  FROM \`trader-scale-486213.trader_scale.fct_commerce_orders\`
-  WHERE is_revenue_eligible
-)
-SELECT o.store_id, o.order_id, o.order_reporting_date,
-  COALESCE(a.affiliate_id, 'unattributed') AS affiliate_id,
-  COALESCE(a.affiliate_name_at_order, 'Unattributed') AS affiliate_name,
-  COALESCE(a.attribution_status, 'unattributed') AS attribution_status,
-  a.customer_id, a.account_ids, a.is_new_customer_order,
-  o.gross_revenue_usd AS gross_revenue,
-  o.net_revenue_usd AS net_revenue,
-  NULLIF(TRIM(a.conflict_state), '') IS NOT NULL AS has_conflict
-FROM eligible_orders AS o
-LEFT JOIN \`trader-scale-486213.trader_scale.fct_affiliate_order_attribution\` AS a
-  USING (store_id, order_id)
-ORDER BY o.order_reporting_date DESC, net_revenue DESC
-`;
-
 const AFFILIATE_PNL_SQL = `
 WITH primary_product AS (
   SELECT store_id, order_id,
@@ -677,12 +657,11 @@ export async function buildSnapshot(serviceAccountJson: string) {
     query(credential, token, ACCOUNTS_SQL),
     query(credential, token, PAYOUTS_SQL),
   ]);
-  const [orderResult, profitabilityResult, affiliateResult, affiliatePnlResult, customerResult, tradeResult,
+  const [orderResult, profitabilityResult, affiliatePnlResult, customerResult, tradeResult,
     marketingChannelResult, marketingCampaignResult, marketingAttributionResult, marketingLtvResult,
     withdrawableResult, withdrawableRunResult, riskFindingsResult, rebuyResult] = await Promise.all([
     optionalQuery(credential, token, "Canonical orders", ORDERS_SQL),
     optionalQuery(credential, token, "Attempt profitability", PROFITABILITY_SQL),
-    optionalQuery(credential, token, "Affiliate attribution", AFFILIATES_SQL),
     optionalQuery(credential, token, "Released affiliate P&L", AFFILIATE_PNL_SQL),
     optionalQuery(credential, token, "Commerce customers", CUSTOMERS_SQL),
     optionalQuery(credential, token, "Account trade history", TRADES_SQL),
@@ -697,12 +676,11 @@ export async function buildSnapshot(serviceAccountJson: string) {
   ]);
   const orderRows = orderResult.rows;
   const profitabilityRows = profitabilityResult.rows;
-  const affiliateRows = affiliateResult.rows;
   const affiliatePnlRows = affiliatePnlResult.rows;
   const customerRows = customerResult.rows;
   const tradeRows = tradeResult.rows;
   const tradeByAccount = new Map(tradeRows.map((row) => [text(row.account_id), row]));
-  const queryErrors = [orderResult.error, profitabilityResult.error, affiliateResult.error, affiliatePnlResult.error, customerResult.error, tradeResult.error,
+  const queryErrors = [orderResult.error, profitabilityResult.error, affiliatePnlResult.error, customerResult.error, tradeResult.error,
     marketingChannelResult.error, marketingCampaignResult.error, marketingAttributionResult.error, marketingLtvResult.error,
     withdrawableResult.error, withdrawableRunResult.error, riskFindingsResult.error, rebuyResult.error].filter(Boolean);
 
@@ -795,17 +773,6 @@ export async function buildSnapshot(serviceAccountJson: string) {
     payoutCount: number(row.payout_count), payouts: number(row.payouts), grossProfit: number(row.gross_profit),
   }));
 
-  const affiliates = affiliateRows.map((row) => ({
-    storeId: text(row.store_id), orderId: text(row.order_id), date: date(row.order_reporting_date),
-    id: text(row.affiliate_id).trim(), name: text(row.affiliate_name).trim(), status: text(row.attribution_status).trim().toLowerCase(),
-    customerId: text(row.customer_id), isNewCustomer: row.is_new_customer_order === true || text(row.is_new_customer_order) === "true",
-    accountIds: Array.isArray(row.account_ids)
-      ? row.account_ids.map((value) => text(value && typeof value === "object" && "v" in value ? value.v : value)).filter(Boolean)
-      : [],
-    grossRevenue: number(row.gross_revenue), netRevenue: number(row.net_revenue),
-    hasConflict: row.has_conflict === true || text(row.has_conflict) === "true",
-  }));
-
   const affiliatePnl = affiliatePnlRows.map((row) => {
     const componentType = text(row.component_type).trim().toLowerCase();
     const productName = text(row.product_name);
@@ -826,6 +793,24 @@ export async function buildSnapshot(serviceAccountJson: string) {
       country: text(row.billing_country, "Unknown"),
     };
   });
+
+  // Released Affiliate P&L revenue components already contain the canonical
+  // order/customer/affiliate relationship used by this dashboard. Reusing
+  // that bundle avoids a second, expensive scan of the attribution view and
+  // guarantees that the order attribution and P&L totals reconcile.
+  const affiliateOrders = new Map<string, (typeof affiliatePnl)[number]>();
+  affiliatePnl.forEach((row) => {
+    if (row.componentType !== "revenue" || row.allocationBucket !== "attributed" || !row.affiliateId) return;
+    const key = `${row.storeId}:${row.orderId}`;
+    if (!affiliateOrders.has(key)) affiliateOrders.set(key, row);
+  });
+  const affiliates = Array.from(affiliateOrders.values()).map((row) => ({
+    storeId: row.storeId, orderId: row.orderId, date: row.date,
+    id: row.affiliateId, name: row.affiliateName, status: "attributed",
+    customerId: row.customerId, isNewCustomer: row.customerType === "new",
+    accountIds: [] as string[], grossRevenue: row.amount, netRevenue: row.amount,
+    hasConflict: false,
+  }));
 
   const customers = customerRows.map((row) => ({
     id: text(row.commerce_customer_key), name: text(row.full_name, "No live data"),
@@ -1014,7 +999,7 @@ export async function buildSnapshot(serviceAccountJson: string) {
     asOf: new Date().toISOString().slice(0, 10), currency: "USD",
     quality: {
       profitabilityReady: !affiliatePnlResult.error || !profitabilityResult.error, revenueReady: !orderResult.error,
-      affiliatesReady: !affiliateResult.error && !affiliatePnlResult.error,
+      affiliatesReady: !affiliatePnlResult.error,
       affiliatePnlReady: !affiliatePnlResult.error, customersReady: !customerResult.error,
       tradesReady: !tradeResult.error,
       marketingReady: !marketingChannelResult.error && !marketingCampaignResult.error && !marketingAttributionResult.error,
