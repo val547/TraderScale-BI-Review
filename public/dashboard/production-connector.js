@@ -1339,23 +1339,10 @@
   async function start() {
     discardDemoData();
     refreshPresentation();
+    var snapshotRequest = fetch(SNAPSHOT_ENDPOINT, { cache: 'no-cache', credentials: 'same-origin' });
+    var manifestRequest = fetch(STATUS_ENDPOINT, { cache: 'no-store' });
     try {
-      var competitorResponse = await fetch(COMPETITOR_ENDPOINT, { cache: 'no-store' });
-      if (competitorResponse.ok) {
-        var competitorPayload = await competitorResponse.json();
-        if (competitorPayload && competitorPayload.mode === 'official-sites') window.BICompetitorMonitorData = competitorPayload;
-      }
-    } catch {
-      window.BICompetitorMonitorData = null;
-    }
-    try {
-      var manifestResponse = await fetch(STATUS_ENDPOINT, { cache: 'no-store' });
-      if (manifestResponse.ok) state.manifest = await manifestResponse.json();
-    } catch (error) {
-      state.error = error;
-    }
-    try {
-      var response = await fetch(SNAPSHOT_ENDPOINT, { cache: 'no-store', credentials: 'same-origin' });
+      var response = await snapshotRequest;
       if (!response.ok || !applySnapshot(await response.json())) throw new Error('Invalid live snapshot.');
     } catch (error) {
       state.error = error;
@@ -1367,6 +1354,27 @@
     }
     refreshPresentation();
     finishBoot();
+    // Auxiliary files are not required to render the selected live-data page.
+    // Parse them after the snapshot is visible so the competitor baseline does
+    // not delay every dashboard visit.
+    setTimeout(async function () {
+      try {
+        var manifestResponse = await manifestRequest;
+        if (manifestResponse.ok) state.manifest = await manifestResponse.json();
+      } catch (error) {
+        state.error = state.error || error;
+      }
+      try {
+        var competitorResponse = await fetch(COMPETITOR_ENDPOINT, { cache: 'no-store' });
+        if (competitorResponse.ok) {
+          var competitorPayload = await competitorResponse.json();
+          window.BICompetitorMonitorData = competitorPayload && competitorPayload.mode === 'official-sites' ? competitorPayload : null;
+        }
+      } catch {
+        window.BICompetitorMonitorData = null;
+      }
+      refreshPresentation();
+    }, 250);
   }
 
   window.BIProductionConnector = { state: state, applySnapshot: applySnapshot, start: start, inDateRange: inDateRange, dateLabel: dateLabel, dateRange: dateRange, refreshPresentation: refreshPresentation, renderOwnerOverview: ownerOverviewPage };

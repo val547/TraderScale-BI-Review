@@ -653,13 +653,11 @@ export async function buildSnapshot(serviceAccountJson: string) {
   const credential = JSON.parse(serviceAccountJson) as ServiceAccount;
   if (credential.project_id !== "trader-scale-486213") throw new Error("Unexpected Google Cloud project.");
   const token = await accessToken(credential);
-  const [accountRows, payoutRows] = await Promise.all([
-    query(credential, token, ACCOUNTS_SQL),
-    query(credential, token, PAYOUTS_SQL),
-  ]);
-  const [orderResult, profitabilityResult, affiliatePnlResult, customerResult, tradeResult,
+  const [accountRows, payoutRows, orderResult, profitabilityResult, affiliatePnlResult, customerResult, tradeResult,
     marketingChannelResult, marketingCampaignResult, marketingAttributionResult, marketingLtvResult,
     withdrawableResult, withdrawableRunResult, riskFindingsResult, rebuyResult] = await Promise.all([
+    query(credential, token, ACCOUNTS_SQL),
+    query(credential, token, PAYOUTS_SQL),
     optionalQuery(credential, token, "Canonical orders", ORDERS_SQL),
     optionalQuery(credential, token, "Attempt profitability", PROFITABILITY_SQL),
     optionalQuery(credential, token, "Released affiliate P&L", AFFILIATE_PNL_SQL),

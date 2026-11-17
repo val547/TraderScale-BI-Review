@@ -3,6 +3,7 @@ import { createReadStream, existsSync, statSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
+import { gzipSync } from "node:zlib";
 import { affiliateSnapshotDiagnostics, buildSnapshot } from "./lib/bi-snapshot.ts";
 
 const port = Number(process.env.PORT || 3000);
@@ -21,7 +22,18 @@ const dashboardRoot = fileURLToPath(new URL("./public/dashboard/", import.meta.u
 const sessionValue = createHash("sha256").update(`traderscale-bi:${accessEmail}:${accessPassword}`).digest("hex");
 const cookieName = "traderscale_bi_session";
 const oauthStateCookie = "traderscale_google_oauth_state";
-let snapshotCache: { expiresAt: number; value: unknown } | null = null;
+const snapshotFreshMs = 5 * 60_000;
+const snapshotStaleMs = 6 * 60 * 60_000;
+type SnapshotCache = {
+  freshUntil: number;
+  staleUntil: number;
+  generatedAt: number;
+  value: unknown;
+  gzip: Buffer;
+  etag: string;
+};
+let snapshotCache: SnapshotCache | null = null;
+let snapshotRefresh: Promise<SnapshotCache> | null = null;
 
 if (!serviceAccountJson) throw new Error("GOOGLE_SERVICE_ACCOUNT_JSON is required.");
 if (!/^\S+@\S+\.\S+$/.test(accessEmail)) throw new Error("BI_ACCESS_EMAIL must be a valid email address.");
@@ -50,6 +62,68 @@ function securityHeaders() {
 
 function send(response: ServerResponse, status: number, body: string, contentType = "text/plain; charset=utf-8") {
   response.writeHead(status, { ...securityHeaders(), "content-type": contentType, "cache-control": "no-store" });
+  response.end(body);
+}
+
+function refreshSnapshot() {
+  if (snapshotRefresh) return snapshotRefresh;
+  snapshotRefresh = (async () => {
+    const value = await buildSnapshot(serviceAccountJson);
+    const generatedAt = Date.now();
+    const gzip = gzipSync(JSON.stringify(value), { level: 6 });
+    const cache = {
+      freshUntil: generatedAt + snapshotFreshMs,
+      staleUntil: generatedAt + snapshotStaleMs,
+      generatedAt,
+      value,
+      gzip,
+      etag: `"${createHash("sha256").update(gzip).digest("base64url")}"`,
+    } satisfies SnapshotCache;
+    snapshotCache = cache;
+    return cache;
+  })().finally(() => {
+    snapshotRefresh = null;
+  });
+  return snapshotRefresh;
+}
+
+async function currentSnapshot() {
+  const now = Date.now();
+  if (snapshotCache && snapshotCache.freshUntil > now) return snapshotCache;
+  if (snapshotCache && snapshotCache.staleUntil > now) {
+    void refreshSnapshot().catch((error) => {
+      console.error("Background BI snapshot refresh failed", error instanceof Error ? error.message : "Unknown error");
+    });
+    return snapshotCache;
+  }
+  return refreshSnapshot();
+}
+
+function sendSnapshot(request: IncomingMessage, response: ServerResponse, cache: SnapshotCache) {
+  const commonHeaders = {
+    ...securityHeaders(),
+    "content-type": "application/json; charset=utf-8",
+    "cache-control": "private, max-age=0, must-revalidate",
+    etag: cache.etag,
+    vary: "accept-encoding",
+    "x-snapshot-age": String(Math.max(0, Math.floor((Date.now() - cache.generatedAt) / 1000))),
+  };
+  if (request.headers["if-none-match"] === cache.etag) {
+    response.writeHead(304, commonHeaders);
+    response.end();
+    return;
+  }
+  if (String(request.headers["accept-encoding"] || "").includes("gzip")) {
+    response.writeHead(200, {
+      ...commonHeaders,
+      "content-encoding": "gzip",
+      "content-length": String(cache.gzip.byteLength),
+    });
+    response.end(cache.gzip);
+    return;
+  }
+  const body = JSON.stringify(cache.value);
+  response.writeHead(200, { ...commonHeaders, "content-length": String(Buffer.byteLength(body)) });
   response.end(body);
 }
 
@@ -214,14 +288,12 @@ const server = createServer(async (request, response) => {
 
   if (url.pathname === "/api/bi/snapshot" && request.method === "GET") {
     try {
-      if (!snapshotCache || snapshotCache.expiresAt <= Date.now()) {
-        snapshotCache = { expiresAt: Date.now() + 300_000, value: await buildSnapshot(serviceAccountJson) };
+      const cache = await currentSnapshot();
+      if (url.searchParams.get("view") === "affiliate-diagnostics") {
+        send(response, 200, JSON.stringify(affiliateSnapshotDiagnostics(cache.value)), "application/json; charset=utf-8");
+      } else {
+        sendSnapshot(request, response, cache);
       }
-      const value = url.searchParams.get("view") === "affiliate-diagnostics"
-        ? affiliateSnapshotDiagnostics(snapshotCache.value)
-        : snapshotCache.value;
-      response.writeHead(200, { ...securityHeaders(), "content-type": "application/json; charset=utf-8", "cache-control": "private, max-age=0" });
-      response.end(JSON.stringify(value));
     } catch (error) {
       const detail = error instanceof Error ? error.message : "Unknown error";
       console.error("BI snapshot failed", detail);
@@ -247,4 +319,7 @@ const server = createServer(async (request, response) => {
 
 server.listen(port, "0.0.0.0", () => {
   console.log(`TraderScale BI listening on port ${port}`);
+  void refreshSnapshot().catch((error) => {
+    console.error("Initial BI snapshot warmup failed", error instanceof Error ? error.message : "Unknown error");
+  });
 });
