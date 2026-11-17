@@ -7140,9 +7140,9 @@ if (location.protocol === 'file:') document.documentElement.classList.remove('pr
       !['failed','unpaid','pending','cancelled','canceled','declined','incomplete'].includes(status)&&!kind.includes('addon')&&num(order.grossSales)-num(order.discount)>0;
   }
   function purchaseLedger(data){const seen=new Set();return (data.orders||[]).filter(order=>{const key=String(order.id||'');if(seen.has(key)||!successfulChallenge(order))return false;seen.add(key);return true;});}
-  function growthFor(current,previous,windows,partners,data){
+  function growthFor(current,previous,windows,partners,data,componentsByDay){
     const activeNow=new Set(current.map(o=>o.affiliateId)),activeBefore=new Set(previous.map(o=>o.affiliateId));
-    const dayTotals=(rows,day)=>{const value=totals(rows,[day,day],new Map(),data);return {active:distinct(rows,'affiliateId'),orders:value.orders,netSales:value.netSales,commissions:value.commissions,profit:value.profit};};
+    const dayTotals=(rows,day)=>{const value=totals(rows,[day,day],new Map(),data,componentsByDay&&componentsByDay.get(day));return {active:distinct(rows,'affiliateId'),orders:value.orders,netSales:value.netSales,commissions:value.commissions,profit:value.profit};};
     const currentDays=new Map(),priorDays=new Map();
     current.forEach(o=>{if(!currentDays.has(o.date))currentDays.set(o.date,[]);currentDays.get(o.date).push(o);});
     previous.forEach(o=>{if(!priorDays.has(o.date))priorDays.set(o.date,[]);priorDays.get(o.date).push(o);});
@@ -7161,11 +7161,11 @@ if (location.protocol === 'file:') document.documentElement.classList.remove('pr
   }
 
   function matches(row,f){return ['programme','country','channel'].every(k=>!f[k]||f[k]==='all'||row[k]===f[k])&&(!f.size||f.size==='all'||Number(row.accountSize)===Number(f.size));}
-  function totals(rows,range,firstPurchases,data){
+  function totals(rows,range,firstPurchases,data,preparedComponents){
     const liveComponents=data&&Array.isArray(data.affiliatePnl)&&data.productionQuality&&data.productionQuality.affiliatePnlReady;
     if(liveComponents){
       const affiliateIds=new Set(rows.map(row=>row.affiliateId).filter(Boolean)),countries=new Set(rows.map(row=>row.country).filter(Boolean));
-      const components=data.affiliatePnl.filter(row=>row.allocationBucket==='attributed'&&row.date>=range[0]&&row.date<=range[1]&&affiliateIds.has(row.affiliateId)&&(!countries.size||countries.has(row.country)));
+      const components=preparedComponents||data.affiliatePnl.filter(row=>row.allocationBucket==='attributed'&&row.date>=range[0]&&row.date<=range[1]&&affiliateIds.has(row.affiliateId)&&(!countries.size||countries.has(row.country)));
       const revenue=components.filter(row=>row.componentType==='revenue'&&row.amountKnown!==false),commissionsRows=components.filter(row=>row.componentType==='commission'&&row.amountKnown!==false),payoutRows=components.filter(row=>row.componentType==='payout'&&row.amountKnown!==false);
       const complete=components.every(row=>row.amountKnown!==false),netSales=sum(revenue,'amount'),commissions=sum(commissionsRows,'amount'),rewards=sum(payoutRows,'amount');
       const orderKeys=new Set(revenue.map(row=>String(row.storeId)+':'+String(row.orderId))),customers=[...new Set(revenue.map(row=>row.customerId).filter(Boolean))];
@@ -7213,13 +7213,30 @@ if (location.protocol === 'file:') document.documentElement.classList.remove('pr
     const base=ledger.filter(o=>affiliates.has(o.affiliateId)&&matches(o,f)&&(settings.trafficType==='all'||typeFor(o)===settings.trafficType));
     const inRange=(rows,range)=>rows.filter(o=>o.date>=range[0]&&o.date<=range[1]);
     const current=inRange(base,windows.current),previous=windows.comparable?inRange(base,windows.prior):[];
+    const liveComponents=Array.isArray(data.affiliatePnl)&&data.productionQuality&&data.productionQuality.affiliatePnlReady;
+    const componentIndex=range=>{
+      if(!liveComponents)return null;
+      const result={all:[],partner:new Map(),country:new Map(),pair:new Map(),byDay:new Map()};
+      const add=(map,key,row)=>{if(!map.has(key))map.set(key,[]);map.get(key).push(row);};
+      data.affiliatePnl.forEach(row=>{
+        if(row.allocationBucket!=='attributed'||row.date<range[0]||row.date>range[1]||!affiliates.has(row.affiliateId)||!matches(row,f))return;
+        const affiliate=affiliates.get(row.affiliateId),traffic=row.affiliateTrafficType||(affiliate&&affiliate.trafficType)||'traditional';
+        if(settings.trafficType!=='all'&&traffic!==settings.trafficType)return;
+        result.all.push(row);add(result.partner,row.affiliateId,row);add(result.country,row.country,row);add(result.pair,row.affiliateId+'|'+row.country,row);add(result.byDay,row.date,row);
+      });
+      return result;
+    };
+    const currentComponents=componentIndex(windows.current),priorComponents=windows.comparable?componentIndex(windows.prior):null;
+    const componentsFor=(index,kind,affiliateId,country)=>!index?undefined:kind==='partner'?(index.partner.get(affiliateId)||[]):kind==='country'?(index.country.get(country)||[]):kind==='partnerCountry'?(index.pair.get(affiliateId+'|'+country)||[]):index.all;
+    const componentsByDay=new Map();
+    [currentComponents,priorComponents].filter(Boolean).forEach(index=>index.byDay.forEach((rows,day)=>componentsByDay.set(day,rows)));
     const relevant=[...current,...previous],orderLookup=new Map(data.orders.map(o=>[o.id,o]));
     const activeAccounts=(data.accounts||[]).filter(a=>a.status==='Active'&&matches(a,f)).map(a=>({account:a,order:orderLookup.get(a.orderId)})).filter(x=>x.order&&affiliates.has(x.order.affiliateId)&&(settings.trafficType==='all'||typeFor(x.order)===settings.trafficType));
     const risk=window.BIRiskRadarData?window.BIRiskRadarData.getReport({...ctx,filters:{programme:'all',size:'all',country:'all',channel:'all'},local:{...ctx.local,radarScope:null,radarStatus:'all',radarPriority:'all',radarSearch:''}}):null;
     const alertsByAccount=risk?risk.accountAlerts:{};
     const build=(kind,affiliateId,country)=>{
       const match=o=>(!affiliateId||o.affiliateId===affiliateId)&&(!country||o.country===country),a=affiliates.get(affiliateId);
-       const c=totals(current.filter(match),windows.current,firstPurchases,data),p=windows.comparable?totals(previous.filter(match),windows.prior,firstPurchases,data):null;
+       const c=totals(current.filter(match),windows.current,firstPurchases,data,componentsFor(currentComponents,kind,affiliateId,country)),p=windows.comparable?totals(previous.filter(match),windows.prior,firstPurchases,data,componentsFor(priorComponents,kind,affiliateId,country)):null;
       const accounts=activeAccounts.filter(x=>match(x.order)).map(x=>x.account),alerts=[...new Map(accounts.flatMap(account=>(alertsByAccount[account.id]||[])).map(alert=>[alert.id,alert])).values()];
       const salesChange=windows.comparable&&p.netSales>0?(c.netSales-p.netSales)/p.netSales*100:null;
       const rowTypes=[...new Set([...c.rawOrders,...(p?p.rawOrders:[])].map(typeFor))],commonType=a?(a.trafficType||'traditional'):rowTypes.length===1?rowTypes[0]:'all';
@@ -7241,11 +7258,11 @@ if (location.protocol === 'file:') document.documentElement.classList.remove('pr
     const rows=selected.slice().sort((a,b)=>settings.sort==='name'?a.name.localeCompare(b.name):(ranked(b[settings.sort])-ranked(a[settings.sort])||ranked(b.profit)-ranked(a.profit)||a.name.localeCompare(b.name)));
     const pageCount=Math.max(1,Math.ceil(rows.length/10)),page=Math.min(settings.page,pageCount-1);
     const chartSorted=chartSource.slice().sort((a,b)=>ranked(b[settings.metric])-ranked(a[settings.metric])||a.name.localeCompare(b.name)),chartPageCount=Math.max(1,Math.ceil(chartSorted.length/CHART_PAGE_SIZE)),chartPage=Math.min(settings.chartPage,chartPageCount-1);
-    const portfolio=totals(current,windows.current,firstPurchases,data),priorTotals=windows.comparable?totals(previous,windows.prior,firstPurchases,data):null;
+    const portfolio=totals(current,windows.current,firstPurchases,data,componentsFor(currentComponents,'all','','')),priorTotals=windows.comparable?totals(previous,windows.prior,firstPurchases,data,componentsFor(priorComponents,'all','','')):null;
     const scaleCandidates=partners.filter(row=>row.decision.key==='scale').sort((a,b)=>b.profit-a.profit),decliners=partners.filter(row=>row.declining).sort((a,b)=>a.salesChange-b.salesChange);
     const geoCandidates=combinations.filter(row=>row.decision.key==='scale').sort((a,b)=>b.profit-a.profit);
     return {settings,windows,dimensions,rows,page,pageCount,pageRows:rows.slice(page*10,(page+1)*10),chartRows:chartSorted.slice(chartPage*CHART_PAGE_SIZE,(chartPage+1)*CHART_PAGE_SIZE),chartPage,chartPageCount,chartTotal:chartSorted.length,
-      partners,geos,combinations,allGroups,growth:growthFor(current,previous,windows,partners,data),totals:portfolio,previous:priorTotals,scaleCandidates,decliners,geoCandidates,
+      partners,geos,combinations,allGroups,growth:growthFor(current,previous,windows,partners,data,componentsByDay),totals:portfolio,previous:priorTotals,scaleCandidates,decliners,geoCandidates,
       summary:{partners:partners.length,growing:partners.filter(r=>r.growing).length,declining:decliners.length,scale:scaleCandidates.length,profit:portfolio.profit,profitChange:priorTotals&&portfolio.profit!==null&&priorTotals.profit!==null?round(portfolio.profit-priorTotals.profit):null,commissions:portfolio.commissions,commissionChange:commissionChange(portfolio,priorTotals)},
       thresholds:defaultThresholds,snapshot:data.asOf};
   }
@@ -7800,6 +7817,7 @@ if (location.protocol === 'file:') document.documentElement.classList.remove('pr
   ];
   const defaults={dimension:'programme',search:'',sort:'amount',affiliate:'all',trafficType:'all',preset:'mtd'};
   const labels={none:'No affiliate',unknown:'Partner not recorded','fast-track':'Fast Track',traditional:'Prop firm affiliates',nonaffiliate:'No affiliate traffic',unrecorded:'Type not recorded'};
+  const ledgerCache=typeof WeakMap==='function'?new WeakMap():null,revenueBaseCache=typeof WeakMap==='function'?new WeakMap():null;
   function stateFor(ctx){const l=ctx.local||{},presetDefault=ctx.data&&ctx.data.demo===false?'all':'mtd';return {dimension:dimensions.some(d=>d.key===l.payoutHistoryDimension)?l.payoutHistoryDimension:defaults.dimension,search:clean(l.payoutHistorySearch),sort:['amount','average','frequency','growth'].includes(l.payoutHistorySort)?l.payoutHistorySort:defaults.sort,affiliate:clean(l.payoutHistoryAffiliate)||'all',trafficType:['all','fast-track','traditional','nonaffiliate','unrecorded'].includes(l.payoutHistoryTrafficType)?l.payoutHistoryTrafficType:'all',preset:['mtd','7d','12m','all','custom'].includes(l.payoutHistoryPreset)?l.payoutHistoryPreset:presetDefault,page:Math.max(0,Math.floor(num(l.payoutHistoryPage))),trendMetric:l.payoutHistoryTrendMetric==='count'?'count':'comparison'};}
   function calendarYearEarlier(date){const d=new Date(date+'T12:00:00Z');d.setUTCFullYear(d.getUTCFullYear()-1);return iso(d.getTime());}
   function windowsFor(ctx,source){
@@ -7819,6 +7837,7 @@ if (location.protocol === 'file:') document.documentElement.classList.remove('pr
   }
   function sourceFor(ctx){return ctx.payoutHistoryData||window.BIMonthlyCohortsData.getData(ctx.data,ctx.local||{});}
   function buildLedger(ctx,source){
+    const cached=ledgerCache&&ledgerCache.get(ctx.data);if(cached&&cached.source===source)return cached.value;
     const data=ctx.data,orders=new Map(unique(source.orders).map(o=>[clean(o.id),o])),accounts=new Map(unique(data.accounts).map(a=>[clean(a.id),a])),customers=new Map(unique(source.customers).map(c=>[clean(c.id),c])),partners=new Map(unique(data.affiliates).map(a=>[clean(a.id),a]));
     const end=Date.parse((validDate(source.asOf||data.asOf)||'2026-10-25')+'T23:59:59.999+04:00');
     let invalidPaid=0,pending=0;const rows=[];
@@ -7837,7 +7856,7 @@ if (location.protocol === 'file:') document.documentElement.classList.remove('pr
       const programme=clean((order&&order.programme)||(account&&account.programme)||p.programme)||'Not recorded',size=Number((order&&order.accountSize)||(account&&account.accountSize)||p.accountSize);
       rows.push({...p,id:clean(p.id),customerId,customerName:(customer&&customer.name)||p.customerName||customerId,paidAt:performanceAt,paidDate:timeDay(performanceAt),paidStamp:paid,performanceBasis:sourceStatus==='approved'?'approval date':'settlement date',amount:round(amount),country:clean(p.country||(order&&order.country)||(account&&account.country)||(customer&&customer.country))||'Not recorded',programme,accountSize:Number.isFinite(size)&&size>0?String(size):'unknown',channel,affiliate,affiliateName:partner?partner.name:labels[affiliate]||'Partner not recorded',trafficType,trafficTypeLabel:labels[trafficType]||'Type not recorded',assetFocus:clean(account&&account.assetFocus)||'Not recorded',accountId:account?clean(account.id):'',accountLogin:account?clean(account.login):'',orderId:order?clean(order.id):clean(p.orderId),order,account,customer,source:p.cohortSource||'Live warehouse payout history',paidAtSimulated:p.paidAtSimulated===true});
     });
-    return {rows,invalidPaid,pending,partners:[...partners.values()]};
+    const value={rows,invalidPaid,pending,partners:[...partners.values()]};if(ledgerCache)ledgerCache.set(ctx.data,{source,value});return value;
   }
   function matches(p,f,s){return ['programme','country','channel'].every(k=>!f[k]||f[k]==='all'||p[k]===f[k])&&(!f.size||f.size==='all'||p.accountSize===String(f.size))&&(s.affiliate==='all'||p.affiliate===s.affiliate)&&(s.trafficType==='all'||p.trafficType===s.trafficType);}
   function metrics(rows){const recipients=new Map();rows.forEach(p=>recipients.set(p.customerId,(recipients.get(p.customerId)||0)+1));const amount=sum(rows,'amount'),clients=recipients.size;return {amount,payments:rows.length,clients,average:rows.length?amount/rows.length:0,perClient:clients?amount/clients:0,frequency:clients?rows.length/clients:0,repeatClients:[...recipients.values()].filter(n=>n>1).length};}
@@ -7887,9 +7906,9 @@ if (location.protocol === 'file:') document.documentElement.classList.remove('pr
     return {rows:matchesPossible,count:matchesPossible.length,dimensions:[...dimensions]};
   }
   function revenueFor(ctx,source,state,windows,filters){
-    const available=Array.isArray(source.orders),partners=new Map(unique(ctx.data.affiliates).map(a=>[clean(a.id),a]));
-    const sourceOrders=unique(source.orders),qualifyingOrders=source.extendedDemo===false?sourceOrders:sourceOrders.filter(challengePurchase);
-    const unfilteredRows=qualifyingOrders.map(order=>({...order,...orderAttribution(order,ctx.data,partners),id:clean(order.id),customerId:clean(order.customerId),date:validDate(order.date),netKnown:hasNumber(order.netSales)}));
+    const available=Array.isArray(source.orders);let prepared=revenueBaseCache&&revenueBaseCache.get(source);
+    if(!prepared){const partners=new Map(unique(ctx.data.affiliates).map(a=>[clean(a.id),a])),sourceOrders=unique(source.orders),qualifyingOrders=source.extendedDemo===false?sourceOrders:sourceOrders.filter(challengePurchase);prepared={unfilteredRows:qualifyingOrders.map(order=>({...order,...orderAttribution(order,ctx.data,partners),id:clean(order.id),customerId:clean(order.customerId),date:validDate(order.date),netKnown:hasNumber(order.netSales)}))};if(revenueBaseCache)revenueBaseCache.set(source,prepared);}
+    const unfilteredRows=prepared.unfilteredRows;
     const rows=unfilteredRows.filter(order=>matches(order,filters,state));
     const invalidDates=rows.filter(o=>!o.date).length,dated=rows.filter(o=>o.date&&o.date<=windows.asOf);
     const aggregate=range=>{const selected=dated.filter(o=>o.date>=range[0]&&o.date<=range[1]),netKnown=selected.every(o=>o.netKnown),netSales=sum(selected.filter(o=>o.netKnown),'netSales'),status=!available?'unavailable':invalidDates||!netKnown?'incomplete':netSales===0?'zero':netSales<0?'negative':'available';return {rows:selected,orders:selected.length,clients:new Set(selected.map(o=>o.customerId)).size,netSales,grossSales:sum(selected,'grossSales'),discounts:sum(selected,'discount'),refunds:sum(selected,'refund'),chargebacks:sum(selected,'chargeback'),invalidNet:selected.filter(o=>!o.netKnown).length,invalidDates,componentsKnown:selected.every(o=>['grossSales','discount','refund','chargeback'].every(k=>hasNumber(o[k]))),status,known:available&&!invalidDates&&netKnown};};

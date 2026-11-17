@@ -336,19 +336,27 @@
   }
 
   function installProductionSources() {
+    var sourceCache = typeof WeakMap === 'function' ? new WeakMap() : null;
     function sourceFor(data) {
+      if (sourceCache && data && sourceCache.has(data)) return sourceCache.get(data);
       var orders = Array.isArray(data.orders) ? data.orders : [];
-      var dates = orders.map(function (row) { return isoDate(row.date); }).filter(Boolean).sort();
+      var firstDate = '';
+      orders.forEach(function (row) {
+        var value = isoDate(row.date);
+        if (value && (!firstDate || value < firstDate)) firstDate = value;
+      });
       var payouts = Array.isArray(data.payouts) ? data.payouts : [];
-      return {
+      var source = {
         orders: orders,
         customers: Array.isArray(data.customers) ? data.customers : [],
         payouts: payouts,
-        historyStart: dates[0] || data.asOf,
+        historyStart: firstDate || data.asOf,
         asOf: data.asOf,
         extendedDemo: false,
         sourceNote: 'Live production warehouse history.'
       };
+      if (sourceCache && data) sourceCache.set(data, source);
+      return source;
     }
     if (window.BICustomerValueData) window.BICustomerValueData.getData = sourceFor;
     if (window.BIMonthlyCohortsData) window.BIMonthlyCohortsData.getData = function (data) { return sourceFor(data); };
