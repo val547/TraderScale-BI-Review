@@ -407,11 +407,13 @@
         extendedDemo: false,
         sourceNote: 'Live production warehouse history.'
       };
+      data.productionPayoutHistorySource = source;
       if (sourceCache && data) sourceCache.set(data, source);
       return source;
     }
     if (window.BICustomerValueData) window.BICustomerValueData.getData = sourceFor;
     if (window.BIMonthlyCohortsData) window.BIMonthlyCohortsData.getData = function (data) { return sourceFor(data); };
+    sourceFor(window.BIData);
     if (window.BIPayoutOutcomesData) window.BIPayoutOutcomesData.getData = function (source, data) {
       var rows = (source && source.payouts || data && data.payouts || []).filter(function (row) { return row.status === 'Rejected'; });
       var rejected = rows.map(function (row) {

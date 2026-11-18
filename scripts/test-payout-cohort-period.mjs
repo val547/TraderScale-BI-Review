@@ -8,6 +8,8 @@ const moduleSource = dashboard.match(/<script data-source="payout-history\.js">(
 assert.ok(moduleSource, 'Payout history module must exist.');
 assert.match(moduleSource, /function firstPurchaseIndex\(source,asOf\)/,
   'Payout filtering must build a verified first-purchase index.');
+assert.match(moduleSource, /production&&ctx\.data\.productionPayoutHistorySource/,
+  'Production Payouts must use the live snapshot source directly, never the hidden demo period state.');
 assert.match(moduleSource, /inRange=\(p,r\)=>p\.firstPurchaseDate>=r\[0\]&&p\.firstPurchaseDate<=r\[1\]/,
   'Payouts must enter the selected period by first purchase date.');
 assert.doesNotMatch(moduleSource, /inRange=\(p,r\)=>p\.paidDate>=r\[0\]/,
@@ -24,6 +26,8 @@ assert.match(connector, /\.production-mode \.ph-date-controls\{display:none!impo
   'Production must show only the global reporting-period control.');
 assert.match(connector, /notifyProductionReady\(\);/,
   'Applying a global date must refresh the live report directly.');
+assert.match(connector, /data\.productionPayoutHistorySource = source/,
+  'The live snapshot must publish one production payout source for every section of the page.');
 assert.match(dashboard, /refreshProduction:refreshProductionData/,
   'The dashboard must expose a direct production refresh hook.');
 assert.match(dashboard, /setTimeout\(refreshProductionData,0\)/,

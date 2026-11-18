@@ -7861,7 +7861,11 @@ if (location.protocol === 'file:') document.documentElement.classList.remove('pr
     const comparable=effectivePreset!=='all'&&prior[0]>=first&&prior[1]<=last;
     return {current,prior,comparable,days,historyStart:first,asOf:last,currentLabel:rangeText(current),priorLabel:rangeText(prior),preset:effectivePreset};
   }
-  function sourceFor(ctx){return ctx.payoutHistoryData||window.BIMonthlyCohortsData.getData(ctx.data,ctx.local||{});}
+  function sourceFor(ctx){
+    const production=window.BIProductionConnector&&window.BIProductionConnector.state&&window.BIProductionConnector.state.mode==='production';
+    if(production&&ctx.data.productionPayoutHistorySource)return ctx.data.productionPayoutHistorySource;
+    return ctx.payoutHistoryData||window.BIMonthlyCohortsData.getData(ctx.data,ctx.local||{});
+  }
   function buildLedger(ctx,source){
     const cached=ledgerCache&&ledgerCache.get(ctx.data);if(cached&&cached.source===source)return cached.value;
     const data=ctx.data,orders=new Map(unique(source.orders).map(o=>[clean(o.id),o])),accounts=new Map(unique(data.accounts).map(a=>[clean(a.id),a])),customers=new Map(unique(source.customers).map(c=>[clean(c.id),c])),partners=new Map(unique(data.affiliates).map(a=>[clean(a.id),a]));
@@ -10264,6 +10268,6 @@ if(window.BIProductionConnector&&window.BIProductionConnector.state&&window.BIPr
 })();
 
 </script>
-<script src="production-connector.js?v=20261118-retry-live-ui2"></script>
+<script src="production-connector.js?v=20261118-payout-cohort-filter"></script>
 </body>
 </html>
