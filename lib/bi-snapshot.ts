@@ -1027,8 +1027,10 @@ export function affiliateSnapshotDiagnostics(snapshot: unknown) {
     data?: {
       affiliates?: Array<{ date?: string; status?: string; id?: string }>;
       affiliatePnl?: Array<{
-        componentType?: string; allocationBucket?: string; affiliateId?: string; amount?: number;
+        date?: string; customerId?: string; componentType?: string; allocationBucket?: string;
+        affiliateId?: string; amount?: number;
       }>;
+      payouts?: Array<{ approvedAt?: string; customerId?: string; amount?: number }>;
     };
   };
   const rows = payload.data?.affiliates ?? [];
@@ -1037,6 +1039,37 @@ export function affiliateSnapshotDiagnostics(snapshot: unknown) {
     text(row.allocationBucket).trim().toLowerCase() === "attributed" && Boolean(text(row.affiliateId)),
   );
   const attributedPayoutAffiliateIds = new Set(attributedPayoutComponents.map((row) => text(row.affiliateId)).filter(Boolean));
+  const payoutRows = (payload.data?.payouts ?? []).filter((row) => Boolean(text(row.approvedAt)) && Boolean(text(row.customerId)));
+  const groupMoney = <T>(source: T[], keyFor: (row: T) => string) => {
+    const groups = new Map<string, { amount: number; rows: T[] }>();
+    source.forEach((row) => {
+      const key = keyFor(row);
+      if (!key) return;
+      const group = groups.get(key) ?? { amount: 0, rows: [] };
+      group.amount += Number((row as { amount?: number }).amount) || 0;
+      group.rows.push(row);
+      groups.set(key, group);
+    });
+    return groups;
+  };
+  const payoutGroups = groupMoney(payoutRows, (row) => `${text(row.customerId)}|${text(row.approvedAt)}`);
+  const componentGroups = groupMoney(payoutComponents, (row) => `${text(row.customerId)}|${text(row.date)}`);
+  let payoutComponentKeyOverlap = 0;
+  let payoutComponentExactMoney = 0;
+  let payoutComponentExactAbsoluteMoney = 0;
+  let payoutComponentExactSingleAffiliate = 0;
+  payoutGroups.forEach((payment, key) => {
+    const component = componentGroups.get(key);
+    if (!component) return;
+    payoutComponentKeyOverlap += 1;
+    const absoluteComponentAmount = component.rows.reduce((total, row) => total + Math.abs(Number(row.amount) || 0), 0);
+    const exact = Math.abs(payment.amount - component.amount) <= 0.01;
+    const exactAbsolute = Math.abs(payment.amount - absoluteComponentAmount) <= 0.01;
+    if (exact) payoutComponentExactMoney += 1;
+    if (exactAbsolute) payoutComponentExactAbsoluteMoney += 1;
+    const affiliateIds = new Set(component.rows.filter((row) => row.allocationBucket === "attributed" && text(row.affiliateId)).map((row) => text(row.affiliateId)));
+    if ((exact || exactAbsolute) && affiliateIds.size === 1) payoutComponentExactSingleAffiliate += 1;
+  });
   const statusCounts: Record<string, number> = {};
   rows.forEach((row) => {
     const status = text(row.status, "unknown").trim().toLowerCase() || "unknown";
@@ -1058,6 +1091,10 @@ export function affiliateSnapshotDiagnostics(snapshot: unknown) {
     attributedPayoutComponents: attributedPayoutComponents.length,
     attributedPayoutAffiliates: attributedPayoutAffiliateIds.size,
     attributedPayoutAmount: attributedPayoutComponents.reduce((total, row) => total + (Number(row.amount) || 0), 0),
+    payoutComponentKeyOverlap,
+    payoutComponentExactMoney,
+    payoutComponentExactAbsoluteMoney,
+    payoutComponentExactSingleAffiliate,
     quality: payload.quality ?? {},
   };
 }
