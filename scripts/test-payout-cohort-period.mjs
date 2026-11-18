@@ -20,6 +20,10 @@ assert.match(moduleSource, /p\.firstPurchaseDate>=windows\.current\[0\]&&p\.firs
   'Rejected outcomes must use the same acquisition cohort.');
 assert.match(moduleSource, /current:\[windows\.current\[0\],windows\.asOf\]/,
   'Selected cohort activity must remain observable through the warehouse snapshot.');
+assert.match(moduleSource, /const point=map\.get\(monthly\?p\.paidDate\.slice\(0,7\):p\.paidDate\);if\(point\)point\.rows\.push\(p\)/,
+  'An out-of-window payout event must not abort the full page refresh.');
+assert.match(moduleSource, /const point=map\.get\(monthly\?o\.date\.slice\(0,7\):o\.date\);if\(point\)point\.orders\.push\(o\)/,
+  'An out-of-window revenue event must not abort the full page refresh.');
 assert.match(moduleSource, /The payout date does not decide whether that customer is included\./,
   'The visible calculation rules must describe the cohort basis clearly.');
 assert.match(connector, /\.production-mode \.ph-date-controls\{display:none!important\}/,
