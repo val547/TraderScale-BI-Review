@@ -37,7 +37,7 @@
     window.dispatchEvent(new Event('bi:production-ready'));
   }
 
-  function loadSnapshot() {
+  function loadSnapshotOnce() {
     function direct() {
       return fetch(SNAPSHOT_ENDPOINT, { cache: 'default', credentials: 'same-origin' }).then(async function (response) {
         if (!response.ok) throw new Error('Live snapshot request failed.');
@@ -61,6 +61,22 @@
       worker.onerror = function () { finish(reject, new Error('Live snapshot worker failed.')); };
       worker.postMessage({ url: SNAPSHOT_ENDPOINT });
     }).catch(function () { return direct(); });
+  }
+
+  async function loadSnapshot() {
+    var retryDelays = [0, 1500, 3000, 6000, 12000, 24000, 30000];
+    var lastError = null;
+    for (var attempt = 0; attempt < retryDelays.length; attempt += 1) {
+      if (retryDelays[attempt]) {
+        await new Promise(function (resolve) { setTimeout(resolve, retryDelays[attempt]); });
+      }
+      try {
+        return await loadSnapshotOnce();
+      } catch (error) {
+        lastError = error;
+      }
+    }
+    throw lastError || new Error('Live snapshot request failed.');
   }
 
   function unique(values) {
