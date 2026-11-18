@@ -458,6 +458,17 @@ LEFT JOIN order_dimensions AS o USING (store_id, order_id)
 ORDER BY c.reporting_date DESC, c.affiliate_id, c.store_id, c.order_id
 `;
 
+const AFFILIATE_PAYOUT_ALLOCATION_SQL = `
+SELECT payout_id, approved_at, reporting_date, customer_id, account_id, account_number,
+  amount_usd, root_account_id, originating_store_id, originating_order_id,
+  affiliate_id, affiliate_name, allocation_bucket, allocation_status,
+  allocation_reason, lineage_status, calculated_at, pnl_run_id
+FROM \`trader-scale-486213.trader_scale.rpt_affiliate_payout_allocation\`
+QUALIFY ROW_NUMBER() OVER (
+  PARTITION BY payout_id ORDER BY calculated_at DESC, pnl_run_id DESC
+) = 1
+`;
+
 const CUSTOMERS_SQL = `
 WITH latest_axcera AS (
   SELECT customer_id, created_at
@@ -653,7 +664,7 @@ export async function buildSnapshot(serviceAccountJson: string) {
   const credential = JSON.parse(serviceAccountJson) as ServiceAccount;
   if (credential.project_id !== "trader-scale-486213") throw new Error("Unexpected Google Cloud project.");
   const token = await accessToken(credential);
-  const [accountRows, payoutRows, orderResult, profitabilityResult, affiliatePnlResult, customerResult, tradeResult,
+  const [accountRows, payoutRows, orderResult, profitabilityResult, affiliatePnlResult, affiliatePayoutAllocationResult, customerResult, tradeResult,
     marketingChannelResult, marketingCampaignResult, marketingAttributionResult, marketingLtvResult,
     withdrawableResult, withdrawableRunResult, riskFindingsResult, rebuyResult] = await Promise.all([
     query(credential, token, ACCOUNTS_SQL),
@@ -661,6 +672,7 @@ export async function buildSnapshot(serviceAccountJson: string) {
     optionalQuery(credential, token, "Canonical orders", ORDERS_SQL),
     optionalQuery(credential, token, "Attempt profitability", PROFITABILITY_SQL),
     optionalQuery(credential, token, "Released affiliate P&L", AFFILIATE_PNL_SQL),
+    optionalQuery(credential, token, "Released affiliate payout allocation", AFFILIATE_PAYOUT_ALLOCATION_SQL),
     optionalQuery(credential, token, "Commerce customers", CUSTOMERS_SQL),
     optionalQuery(credential, token, "Account trade history", TRADES_SQL),
     optionalQuery(credential, token, "ThoughtMetric channels", THOUGHTMETRIC_CHANNEL_SQL),
@@ -675,10 +687,11 @@ export async function buildSnapshot(serviceAccountJson: string) {
   const orderRows = orderResult.rows;
   const profitabilityRows = profitabilityResult.rows;
   const affiliatePnlRows = affiliatePnlResult.rows;
+  const affiliatePayoutAllocations = new Map(affiliatePayoutAllocationResult.rows.map((row) => [text(row.payout_id), row]));
   const customerRows = customerResult.rows;
   const tradeRows = tradeResult.rows;
   const tradeByAccount = new Map(tradeRows.map((row) => [text(row.account_id), row]));
-  const queryErrors = [orderResult.error, profitabilityResult.error, affiliatePnlResult.error, customerResult.error, tradeResult.error,
+  const queryErrors = [orderResult.error, profitabilityResult.error, affiliatePnlResult.error, affiliatePayoutAllocationResult.error, customerResult.error, tradeResult.error,
     marketingChannelResult.error, marketingCampaignResult.error, marketingAttributionResult.error, marketingLtvResult.error,
     withdrawableResult.error, withdrawableRunResult.error, riskFindingsResult.error, rebuyResult.error].filter(Boolean);
 
@@ -727,6 +740,11 @@ export async function buildSnapshot(serviceAccountJson: string) {
     const status = payoutStatus(row.status);
     const approvedAt = ["Approved", "Paid"].includes(status) ? date(row.approved_at) : "";
     const rejectedAt = status === "Rejected" ? date(row.updated_at) : "";
+    const allocation = affiliatePayoutAllocations.get(text(row.payout_id));
+    const allocationBucket = text(allocation?.allocation_bucket).trim().toLowerCase();
+    const affiliateId = allocationBucket === "attributed" ? text(allocation?.affiliate_id).trim() : "";
+    const originatingStoreId = text(allocation?.originating_store_id).trim();
+    const originatingOrderId = text(allocation?.originating_order_id).trim();
     return {
       id: text(row.payout_id, text(row.payout_nr)), customerId: text(row.commerce_customer_key, text(row.customer_id)),
       warehouseCustomerId: text(row.customer_id),
@@ -736,12 +754,21 @@ export async function buildSnapshot(serviceAccountJson: string) {
       programmeFamily: programmeFamily({ plan: row.account_plan, plan_category_name: row.account_plan_category_name }),
       plan: text(row.account_plan, text(row.account_plan_category_name)), platform: platform({ platform: row.platform, plan: row.account_plan }),
       accountSize: number(row.start_balance),
-      country: text(row.country, "Unknown"), channel: "Unknown",
+      country: text(row.country, "Unknown"), channel: affiliateId ? "Affiliate" : "Unknown",
       amount: number(row.share_amount || row.request_amount), requestedAt: date(row.requested_at),
       status, method: "Restricted", approvedAt,
       paidAt: status === "Paid" ? date(row.updated_at) : "",
       rejectedAt,
       decisionAt: approvedAt || rejectedAt,
+      orderId: originatingStoreId && originatingOrderId ? `${originatingStoreId}:${originatingOrderId}` : "",
+      originatingStoreId, originatingOrderId, rootAccountId: text(allocation?.root_account_id),
+      affiliateId, affiliateName: affiliateId ? text(allocation?.affiliate_name, affiliateId) : "",
+      affiliateTrafficType: affiliateId ? "fast-track" : "",
+      affiliateAttributionSource: affiliateId ? "Released payout-to-origin allocation" : "",
+      affiliateAllocationBucket: allocationBucket,
+      affiliateAllocationStatus: text(allocation?.allocation_status),
+      affiliateAllocationReason: text(allocation?.allocation_reason),
+      affiliateLineageStatus: text(allocation?.lineage_status),
     };
   });
 
@@ -799,7 +826,7 @@ export async function buildSnapshot(serviceAccountJson: string) {
   // amount; it does not expose the commerce payout id directly.
   const payoutGroups = new Map<string, { amount: number; rows: typeof payouts }>();
   payouts.forEach((row) => {
-    if (!row.approvedAt || !row.warehouseCustomerId) return;
+    if (!row.approvedAt || !row.warehouseCustomerId || row.affiliateId) return;
     const key = `${row.warehouseCustomerId}|${row.approvedAt}`;
     const group = payoutGroups.get(key) ?? { amount: 0, rows: [] };
     group.amount += row.amount;

@@ -17,6 +17,14 @@ assert.doesNotMatch(moduleSource, /unique\(data\.affiliatePnl\)/,
   'Released Affiliate P&L components have no generic id and must not be discarded by payout-row deduplication.');
 assert.match(snapshot, /affiliateAttributionSource: "Released Affiliate P&L payout allocation"/,
   'The production snapshot must ship reconciled payout affiliate attribution to the browser.');
+assert.match(snapshot, /rpt_affiliate_payout_allocation/,
+  'Payout affiliate attribution must use the released payout-to-origin allocation view.');
+assert.match(snapshot, /affiliatePayoutAllocations\.get\(text\(row\.payout_id\)\)/,
+  'The released allocation must join directly to the stable payout id.');
+assert.match(snapshot, /affiliateAttributionSource: affiliateId \? "Released payout-to-origin allocation"/,
+  'Direct payout-to-origin attribution must retain explicit provenance.');
+assert.match(snapshot, /!row\.approvedAt \|\| !row\.warehouseCustomerId \|\| row\.affiliateId/,
+  'The legacy money reconciliation must not overwrite a direct released payout allocation.');
 assert.match(snapshot, /Math\.abs\(paymentGroup\.amount - componentGroup\.amount\) > 0\.01/,
   'Server-side payout attribution must reconcile grouped money before assigning an affiliate.');
 assert.match(moduleSource, /row\.warehouseCustomerId\|\|row\.customerId/,
