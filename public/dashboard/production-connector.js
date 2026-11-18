@@ -41,7 +41,7 @@
 
   function loadSnapshotOnce() {
     function direct() {
-      return fetch(SNAPSHOT_ENDPOINT, { cache: 'default', credentials: 'same-origin' }).then(async function (response) {
+      return fetch(SNAPSHOT_ENDPOINT, { cache: 'no-cache', credentials: 'same-origin' }).then(async function (response) {
         if (!response.ok) throw new Error('Live snapshot request failed.');
         return { payload: await response.json(), revision: response.headers.get('etag') || '' };
       });

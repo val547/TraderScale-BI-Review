@@ -103,7 +103,10 @@ function sendSnapshot(request: IncomingMessage, response: ServerResponse, cache:
   const commonHeaders = {
     ...securityHeaders(),
     "content-type": "application/json; charset=utf-8",
-    "cache-control": "private, max-age=86400, stale-while-revalidate=3600",
+    // The warehouse result is still generated once per day in memory, but the
+    // browser must revalidate its ETag so a deployment cannot keep an older
+    // snapshot schema or attribution mapping for another 24 hours.
+    "cache-control": "private, max-age=0, must-revalidate, stale-if-error=3600",
     etag: cache.etag,
     vary: "accept-encoding",
     "x-snapshot-age": String(Math.max(0, Math.floor((Date.now() - cache.generatedAt) / 1000))),
