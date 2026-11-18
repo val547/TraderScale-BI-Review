@@ -1022,8 +1022,21 @@ export async function buildSnapshot(serviceAccountJson: string) {
 }
 
 export function affiliateSnapshotDiagnostics(snapshot: unknown) {
-  const payload = snapshot as { quality?: unknown; data?: { affiliates?: Array<{ date?: string; status?: string; id?: string }> } };
+  const payload = snapshot as {
+    quality?: unknown;
+    data?: {
+      affiliates?: Array<{ date?: string; status?: string; id?: string }>;
+      affiliatePnl?: Array<{
+        componentType?: string; allocationBucket?: string; affiliateId?: string; amount?: number;
+      }>;
+    };
+  };
   const rows = payload.data?.affiliates ?? [];
+  const payoutComponents = (payload.data?.affiliatePnl ?? []).filter((row) => text(row.componentType).trim().toLowerCase() === "payout");
+  const attributedPayoutComponents = payoutComponents.filter((row) =>
+    text(row.allocationBucket).trim().toLowerCase() === "attributed" && Boolean(text(row.affiliateId)),
+  );
+  const attributedPayoutAffiliateIds = new Set(attributedPayoutComponents.map((row) => text(row.affiliateId)).filter(Boolean));
   const statusCounts: Record<string, number> = {};
   rows.forEach((row) => {
     const status = text(row.status, "unknown").trim().toLowerCase() || "unknown";
@@ -1041,6 +1054,10 @@ export function affiliateSnapshotDiagnostics(snapshot: unknown) {
     generatedAt: new Date().toISOString(), totalRows: rows.length,
     latestSourceOrderDate: latest(rows), latestAttributedOrderDate: latest(attributed),
     statusCounts, rowsAfterOctober21: afterOctober21.length, afterOctober21StatusCounts: afterStatusCounts,
+    payoutComponents: payoutComponents.length,
+    attributedPayoutComponents: attributedPayoutComponents.length,
+    attributedPayoutAffiliates: attributedPayoutAffiliateIds.size,
+    attributedPayoutAmount: attributedPayoutComponents.reduce((total, row) => total + (Number(row.amount) || 0), 0),
     quality: payload.quality ?? {},
   };
 }

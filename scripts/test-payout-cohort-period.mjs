@@ -4,10 +4,18 @@ import { readFileSync } from 'node:fs';
 const dashboard = readFileSync(new URL('../public/dashboard/index.html', import.meta.url), 'utf8');
 const connector = readFileSync(new URL('../public/dashboard/production-connector.js', import.meta.url), 'utf8');
 const moduleSource = dashboard.match(/<script data-source="payout-history\.js">([\s\S]*?)<\/script>/)?.[1] || '';
+const cohortSource = dashboard.match(/<script data-source="payout-cohorts\.js">([\s\S]*?)<\/script>/)?.[1] || '';
 
 assert.ok(moduleSource, 'Payout history module must exist.');
+assert.ok(cohortSource, 'Payout cohort-month module must exist.');
 assert.match(moduleSource, /function firstPurchaseIndex\(source,asOf\)/,
   'Payout filtering must build a verified first-purchase index.');
+assert.match(moduleSource, /row\.componentType==='payout'.*row\.customerId/,
+  'Affiliate payout attribution must use released payout components, not assume No affiliate.');
+assert.match(moduleSource, /Math\.abs\(paymentAmount-componentAmount\)>\.01/,
+  'Affiliate payout attribution must reconcile component money before assigning a partner.');
+assert.match(moduleSource, /affiliateIds\.length===1/,
+  'Ambiguous multi-affiliate payout allocations must remain unassigned.');
 assert.match(moduleSource, /production&&ctx\.data\.productionPayoutHistorySource/,
   'Production Payouts must use the live snapshot source directly, never the hidden demo period state.');
 assert.match(moduleSource, /inRange=\(p,r\)=>p\.firstPurchaseDate>=r\[0\]&&p\.firstPurchaseDate<=r\[1\]/,
@@ -36,5 +44,13 @@ assert.match(dashboard, /refreshProduction:refreshProductionData/,
   'The dashboard must expose a direct production refresh hook.');
 assert.match(dashboard, /setTimeout\(refreshProductionData,0\)/,
   'The dashboard must recover when the live snapshot arrives before its listeners are installed.');
+assert.match(cohortSource, /payout\.scoped\.filter\(payment=>payment\.paidDate>=payout\.windows\.current\[0\]&&payment\.paidDate<=payout\.windows\.current\[1\]\)/,
+  'Cohort month must select payouts by the top reporting period, then look up first purchase from full history.');
+assert.match(cohortSource, /firstPurchases\(payout\.source,payout\.ledger\.rows,payout\.windows\.asOf\)/,
+  'First purchase month must use all available purchase and payout history.');
+assert.match(cohortSource, /render:cashPeriodRender/,
+  'Cohort month copy and exports must describe a payout cash period, not an acquisition-date filter.');
+assert.doesNotMatch(cohortSource, /FictionalDemo/,
+  'Live payout cohort exports must never be labelled as fictional or demo data.');
 
 console.log('payout cohort period: first-purchase filtering passed');
