@@ -1070,7 +1070,10 @@ export function affiliateSnapshotDiagnostics(snapshot: unknown) {
         date?: string; customerId?: string; componentType?: string; allocationBucket?: string;
         affiliateId?: string; amount?: number;
       }>;
-      payouts?: Array<{ approvedAt?: string; customerId?: string; warehouseCustomerId?: string; amount?: number }>;
+      payouts?: Array<{
+        approvedAt?: string; customerId?: string; warehouseCustomerId?: string;
+        affiliateId?: string; affiliateName?: string; amount?: number;
+      }>;
     };
   };
   const rows = payload.data?.affiliates ?? [];
@@ -1135,6 +1138,8 @@ export function affiliateSnapshotDiagnostics(snapshot: unknown) {
     payoutComponentExactMoney,
     payoutComponentExactAbsoluteMoney,
     payoutComponentExactSingleAffiliate,
+    payoutRowsWithAffiliate: payoutRows.filter((row) => Boolean(text(row.affiliateId))).length,
+    payoutAffiliateIds: new Set(payoutRows.map((row) => text(row.affiliateId)).filter(Boolean)).size,
     quality: payload.quality ?? {},
   };
 }
