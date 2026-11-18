@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
 const dashboard = readFileSync(new URL('../public/dashboard/index.html', import.meta.url), 'utf8');
+const connector = readFileSync(new URL('../public/dashboard/production-connector.js', import.meta.url), 'utf8');
 const moduleSource = dashboard.match(/<script data-source="payout-history\.js">([\s\S]*?)<\/script>/)?.[1] || '';
 
 assert.ok(moduleSource, 'Payout history module must exist.');
@@ -19,5 +20,13 @@ assert.match(moduleSource, /current:\[windows\.current\[0\],windows\.asOf\]/,
   'Selected cohort activity must remain observable through the warehouse snapshot.');
 assert.match(moduleSource, /The payout date does not decide whether that customer is included\./,
   'The visible calculation rules must describe the cohort basis clearly.');
+assert.match(connector, /\.production-mode \.ph-date-controls\{display:none!important\}/,
+  'Production must show only the global reporting-period control.');
+assert.match(connector, /notifyProductionReady\(\);/,
+  'Applying a global date must refresh the live report directly.');
+assert.match(dashboard, /refreshProduction:refreshProductionData/,
+  'The dashboard must expose a direct production refresh hook.');
+assert.match(dashboard, /setTimeout\(refreshProductionData,0\)/,
+  'The dashboard must recover when the live snapshot arrives before its listeners are installed.');
 
 console.log('payout cohort period: first-purchase filtering passed');
