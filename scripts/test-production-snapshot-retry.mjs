@@ -12,7 +12,9 @@ assert.match(connector, /return await loadSnapshotOnce\(\)/,
   'A successful retry must immediately continue production startup.');
 assert.match(connector, /throw lastError \|\| new Error\('Live snapshot request failed\.'\)/,
   'The no-live-data state must appear only after all retries fail.');
-assert.match(dashboard, /production-connector\.js\?v=20261118-retry-live/,
+assert.match(connector, /function notifyProductionReady\(\) \{\s+setTimeout\(function \(\) \{/,
+  'UI refresh must not turn an already loaded snapshot into a source failure.');
+assert.match(dashboard, /production-connector\.js\?v=20261118-retry-live-ui2/,
   'The dashboard must bypass cached connector builds after the retry fix.');
 
 console.log('production snapshot retry: Railway warmup recovery passed');

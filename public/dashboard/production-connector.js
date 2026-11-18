@@ -30,11 +30,13 @@
   }
 
   function notifyProductionReady() {
-    if (window.BIPrototype && typeof window.BIPrototype.refreshProduction === 'function') {
-      window.BIPrototype.refreshProduction();
-      return;
-    }
-    window.dispatchEvent(new Event('bi:production-ready'));
+    setTimeout(function () {
+      if (window.BIPrototype && typeof window.BIPrototype.refreshProduction === 'function') {
+        window.BIPrototype.refreshProduction();
+        return;
+      }
+      window.dispatchEvent(new Event('bi:production-ready'));
+    }, 0);
   }
 
   function loadSnapshotOnce() {
