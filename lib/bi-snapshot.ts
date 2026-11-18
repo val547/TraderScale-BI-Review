@@ -793,6 +793,45 @@ export async function buildSnapshot(serviceAccountJson: string) {
     };
   });
 
+  // Attach the released payout allocation to the payout ledger before it is
+  // sent to the browser.  The released Affiliate P&L contract uses the
+  // warehouse customer identity, approval/reporting date and reconciled group
+  // amount; it does not expose the commerce payout id directly.
+  const payoutGroups = new Map<string, { amount: number; rows: typeof payouts }>();
+  payouts.forEach((row) => {
+    if (!row.approvedAt || !row.warehouseCustomerId) return;
+    const key = `${row.warehouseCustomerId}|${row.approvedAt}`;
+    const group = payoutGroups.get(key) ?? { amount: 0, rows: [] };
+    group.amount += row.amount;
+    group.rows.push(row);
+    payoutGroups.set(key, group);
+  });
+  const payoutComponentGroups = new Map<string, { amount: number; rows: typeof affiliatePnl }>();
+  affiliatePnl.forEach((row) => {
+    if (row.componentType !== "payout" || !row.date || !row.customerId) return;
+    const key = `${row.customerId}|${row.date}`;
+    const group = payoutComponentGroups.get(key) ?? { amount: 0, rows: [] };
+    group.amount += row.amount;
+    group.rows.push(row);
+    payoutComponentGroups.set(key, group);
+  });
+  payoutGroups.forEach((paymentGroup, key) => {
+    const componentGroup = payoutComponentGroups.get(key);
+    if (!componentGroup || Math.abs(paymentGroup.amount - componentGroup.amount) > 0.01) return;
+    const attributed = componentGroup.rows.filter((row) => row.allocationBucket === "attributed" && row.affiliateId);
+    const affiliateIds = Array.from(new Set(attributed.map((row) => row.affiliateId)));
+    if (affiliateIds.length !== 1) return;
+    const affiliateId = affiliateIds[0];
+    const affiliateName = attributed.find((row) => row.affiliateId === affiliateId)?.affiliateName || affiliateId;
+    paymentGroup.rows.forEach((payment) => Object.assign(payment, {
+      affiliateId,
+      affiliateName,
+      affiliateTrafficType: "fast-track",
+      channel: "Affiliate",
+      affiliateAttributionSource: "Released Affiliate P&L payout allocation",
+    }));
+  });
+
   // Released Affiliate P&L revenue components already contain the canonical
   // order/customer/affiliate relationship used by this dashboard. Reusing
   // that bundle avoids a second, expensive scan of the attribution view and

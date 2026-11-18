@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 
 const dashboard = readFileSync(new URL('../public/dashboard/index.html', import.meta.url), 'utf8');
 const connector = readFileSync(new URL('../public/dashboard/production-connector.js', import.meta.url), 'utf8');
+const snapshot = readFileSync(new URL('../lib/bi-snapshot.ts', import.meta.url), 'utf8');
 const moduleSource = dashboard.match(/<script data-source="payout-history\.js">([\s\S]*?)<\/script>/)?.[1] || '';
 const cohortSource = dashboard.match(/<script data-source="payout-cohorts\.js">([\s\S]*?)<\/script>/)?.[1] || '';
 
@@ -14,6 +15,10 @@ assert.match(moduleSource, /row\.componentType==='payout'.*row\.customerId/,
   'Affiliate payout attribution must use released payout components, not assume No affiliate.');
 assert.doesNotMatch(moduleSource, /unique\(data\.affiliatePnl\)/,
   'Released Affiliate P&L components have no generic id and must not be discarded by payout-row deduplication.');
+assert.match(snapshot, /affiliateAttributionSource: "Released Affiliate P&L payout allocation"/,
+  'The production snapshot must ship reconciled payout affiliate attribution to the browser.');
+assert.match(snapshot, /Math\.abs\(paymentGroup\.amount - componentGroup\.amount\) > 0\.01/,
+  'Server-side payout attribution must reconcile grouped money before assigning an affiliate.');
 assert.match(moduleSource, /row\.warehouseCustomerId\|\|row\.customerId/,
   'Affiliate payout attribution must reconcile the warehouse customer identity used by the released P&L view.');
 assert.match(moduleSource, /row\.affiliate==='none'\|\|!knownAttribution\(row\.affiliate\)/,
