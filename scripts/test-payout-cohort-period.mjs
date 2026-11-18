@@ -16,6 +16,10 @@ assert.match(moduleSource, /row\.warehouseCustomerId\|\|row\.customerId/,
   'Affiliate payout attribution must reconcile the warehouse customer identity used by the released P&L view.');
 assert.match(moduleSource, /row\.affiliate==='none'\|\|!knownAttribution\(row\.affiliate\)/,
   'No-affiliate defaults must still be eligible for released P&L reconciliation.');
+assert.match(moduleSource, /\(data\.affiliatePnl\|\|\[\]\)\.length/,
+  'Payout ledger cache must invalidate when released Affiliate P&L rows arrive after the first render.');
+assert.match(moduleSource, /cached\.revision===cacheRevision/,
+  'Payout ledger cache must not preserve the pre-live no-affiliate ledger.');
 assert.match(moduleSource, /Math\.abs\(paymentAmount-componentAmount\)>\.01/,
   'Affiliate payout attribution must reconcile component money before assigning a partner.');
 assert.match(moduleSource, /affiliateIds\.length===1/,
