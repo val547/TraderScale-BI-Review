@@ -33,22 +33,22 @@ assert.match(moduleSource, /affiliateIds\.length===1/,
   'Ambiguous multi-affiliate payout allocations must remain unassigned.');
 assert.match(moduleSource, /production&&ctx\.data\.productionPayoutHistorySource/,
   'Production Payouts must use the live snapshot source directly, never the hidden demo period state.');
-assert.match(moduleSource, /inRange=\(p,r\)=>p\.firstPurchaseDate>=r\[0\]&&p\.firstPurchaseDate<=r\[1\]/,
-  'Payouts must enter the selected period by first purchase date.');
-assert.doesNotMatch(moduleSource, /inRange=\(p,r\)=>p\.paidDate>=r\[0\]/,
-  'Payout settlement date must not control cohort membership.');
-assert.match(moduleSource, /dated\.filter\(o=>o\.firstPurchaseDate>=range\[0\]&&o\.firstPurchaseDate<=range\[1\]\)/,
-  'Revenue must use the same acquisition cohort.');
-assert.match(moduleSource, /p\.firstPurchaseDate>=windows\.current\[0\]&&p\.firstPurchaseDate<=windows\.current\[1\]/,
-  'Rejected outcomes must use the same acquisition cohort.');
-assert.match(moduleSource, /current:\[windows\.current\[0\],windows\.asOf\]/,
-  'Selected cohort activity must remain observable through the warehouse snapshot.');
+assert.match(moduleSource, /inRange=\(p,r\)=>p\.paidDate>=r\[0\]&&p\.paidDate<=r\[1\]/,
+  'Every payout section must use the top reporting period on settlement date.');
+assert.doesNotMatch(moduleSource, /inRange=\(p,r\)=>p\.firstPurchaseDate>=r\[0\]/,
+  'First purchase date must not control page-wide payout membership.');
+assert.match(moduleSource, /dated\.filter\(o=>o\.date>=range\[0\]&&o\.date<=range\[1\]\)/,
+  'Revenue must use purchase events in the same reporting period.');
+assert.match(moduleSource, /p\.rejectedDate>=windows\.current\[0\]&&p\.rejectedDate<=windows\.current\[1\]/,
+  'Rejected outcomes must use decision events in the same reporting period.');
+assert.doesNotMatch(moduleSource, /current:\[windows\.current\[0\],windows\.asOf\]/,
+  'Charts must not silently extend beyond the selected reporting period.');
 assert.match(moduleSource, /const point=map\.get\(monthly\?p\.paidDate\.slice\(0,7\):p\.paidDate\);if\(point\)point\.rows\.push\(p\)/,
   'An out-of-window payout event must not abort the full page refresh.');
 assert.match(moduleSource, /const point=map\.get\(monthly\?o\.date\.slice\(0,7\):o\.date\);if\(point\)point\.orders\.push\(o\)/,
   'An out-of-window revenue event must not abort the full page refresh.');
-assert.match(moduleSource, /The payout date does not decide whether that customer is included\./,
-  'The visible calculation rules must describe the cohort basis clearly.');
+assert.match(moduleSource, /Paid payouts are selected by settlement date\. Every chart and table below uses the same selected payouts\./,
+  'The visible page must state the single reporting-period basis clearly.');
 assert.match(connector, /\.production-mode \.ph-date-controls\{display:none!important\}/,
   'Production must show only the global reporting-period control.');
 assert.match(connector, /notifyProductionReady\(\);/,
@@ -59,13 +59,17 @@ assert.match(dashboard, /refreshProduction:refreshProductionData/,
   'The dashboard must expose a direct production refresh hook.');
 assert.match(dashboard, /setTimeout\(refreshProductionData,0\)/,
   'The dashboard must recover when the live snapshot arrives before its listeners are installed.');
-assert.match(cohortSource, /payout\.scoped\.filter\(payment=>payment\.paidDate>=payout\.windows\.current\[0\]&&payment\.paidDate<=payout\.windows\.current\[1\]\)/,
-  'Cohort month must select payouts by the top reporting period, then look up first purchase from full history.');
+assert.match(cohortSource, /const payments=payout\.current\.map\(payment=>/,
+  'Cohort month must consume the exact same selected payout rows as the page KPIs.');
 assert.match(cohortSource, /firstPurchases\(payout\.source,payout\.ledger\.rows,payout\.windows\.asOf\)/,
   'First purchase month must use all available purchase and payout history.');
+assert.match(cohortSource, /const total=rowTotals\(payments\)/,
+  'Cohort totals must be calculated from the exact selected payout rows.');
+assert.match(cohortSource, /total\.payments===payout\.totals\.payments&&Math\.abs\(total\.amount-payout\.totals\.amount\)<\.01/,
+  'Cohort count and value must reconcile to the top payout KPIs.');
 assert.match(cohortSource, /render:cashPeriodRender/,
   'Cohort month copy and exports must describe a payout cash period, not an acquisition-date filter.');
 assert.doesNotMatch(cohortSource, /FictionalDemo/,
   'Live payout cohort exports must never be labelled as fictional or demo data.');
 
-console.log('payout cohort period: first-purchase filtering passed');
+console.log('payout reporting period: settlement-date filtering passed');
