@@ -14,6 +14,8 @@ assert.match(moduleSource, /row\.componentType==='payout'.*row\.customerId/,
   'Affiliate payout attribution must use released payout components, not assume No affiliate.');
 assert.match(moduleSource, /row\.warehouseCustomerId\|\|row\.customerId/,
   'Affiliate payout attribution must reconcile the warehouse customer identity used by the released P&L view.');
+assert.match(moduleSource, /row\.affiliate==='none'\|\|!knownAttribution\(row\.affiliate\)/,
+  'No-affiliate defaults must still be eligible for released P&L reconciliation.');
 assert.match(moduleSource, /Math\.abs\(paymentAmount-componentAmount\)>\.01/,
   'Affiliate payout attribution must reconcile component money before assigning a partner.');
 assert.match(moduleSource, /affiliateIds\.length===1/,
