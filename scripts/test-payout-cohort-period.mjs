@@ -12,6 +12,8 @@ assert.match(moduleSource, /function firstPurchaseIndex\(source,asOf\)/,
   'Payout filtering must build a verified first-purchase index.');
 assert.match(moduleSource, /row\.componentType==='payout'.*row\.customerId/,
   'Affiliate payout attribution must use released payout components, not assume No affiliate.');
+assert.match(moduleSource, /row\.warehouseCustomerId\|\|row\.customerId/,
+  'Affiliate payout attribution must reconcile the warehouse customer identity used by the released P&L view.');
 assert.match(moduleSource, /Math\.abs\(paymentAmount-componentAmount\)>\.01/,
   'Affiliate payout attribution must reconcile component money before assigning a partner.');
 assert.match(moduleSource, /affiliateIds\.length===1/,

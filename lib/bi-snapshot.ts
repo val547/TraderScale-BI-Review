@@ -729,6 +729,7 @@ export async function buildSnapshot(serviceAccountJson: string) {
     const rejectedAt = status === "Rejected" ? date(row.updated_at) : "";
     return {
       id: text(row.payout_id, text(row.payout_nr)), customerId: text(row.commerce_customer_key, text(row.customer_id)),
+      warehouseCustomerId: text(row.customer_id),
       customerName: text(row.customer_name, "Unknown customer"), account: text(row.account_login),
       accountId: text(row.account_id),
       programme: productPlan({ plan: row.account_plan, plan_category_name: row.account_plan_category_name, platform: row.platform }, row.start_balance),
@@ -1030,7 +1031,7 @@ export function affiliateSnapshotDiagnostics(snapshot: unknown) {
         date?: string; customerId?: string; componentType?: string; allocationBucket?: string;
         affiliateId?: string; amount?: number;
       }>;
-      payouts?: Array<{ approvedAt?: string; customerId?: string; amount?: number }>;
+      payouts?: Array<{ approvedAt?: string; customerId?: string; warehouseCustomerId?: string; amount?: number }>;
     };
   };
   const rows = payload.data?.affiliates ?? [];
@@ -1052,7 +1053,7 @@ export function affiliateSnapshotDiagnostics(snapshot: unknown) {
     });
     return groups;
   };
-  const payoutGroups = groupMoney(payoutRows, (row) => `${text(row.customerId)}|${text(row.approvedAt)}`);
+  const payoutGroups = groupMoney(payoutRows, (row) => `${text(row.warehouseCustomerId, text(row.customerId))}|${text(row.approvedAt)}`);
   const componentGroups = groupMoney(payoutComponents, (row) => `${text(row.customerId)}|${text(row.date)}`);
   let payoutComponentKeyOverlap = 0;
   let payoutComponentExactMoney = 0;
