@@ -594,6 +594,13 @@
     discardDemoData();
     state.snapshot = payload;
     state.dateBoundsCache = null;
+    if (!state.dateStart || !state.dateEnd) {
+      var defaultRange = presetRange('this-month');
+      state.dateStart = defaultRange.start;
+      state.dateEnd = defaultRange.end;
+      state.dateAllTime = false;
+      state.pendingAllTime = false;
+    }
     var adapted = adaptSnapshotData(payload);
     var withdrawableByAccount = {};
     ((data.withdrawable && data.withdrawable.accounts) || []).forEach(function (row) {
@@ -765,6 +772,9 @@
     var bounds = dateBounds();
     var start = state.dateAllTime ? bounds.min : state.dateStart;
     var end = state.dateAllTime ? bounds.max : state.dateEnd;
+    var thisMonth = presetRange('this-month');
+    var activePreset = state.pendingAllTime ? 'all'
+      : start === thisMonth.start && end === thisMonth.end ? 'this-month' : '';
     var presets = [
       ['all', 'All time'], ['today', 'Today'], ['yesterday', 'Yesterday'], ['7d', 'Last 7 days'],
       ['14d', 'Last 14 days'], ['30d', 'Last 30 days'], ['90d', 'Last 90 days'],
@@ -776,7 +786,7 @@
       + '<button class="live-date-trigger" data-production-action="toggle-date-picker" aria-expanded="' + state.datePickerOpen + '">'
       + '<span class="live-date-calendar" aria-hidden="true">▦</span><span><small>REPORTING PERIOD</small><strong>' + escapeHtml(dateLabel()) + '</strong></span><b>⌄</b></button>'
       + (state.datePickerOpen ? '<div class="live-date-popover"><aside class="live-date-presets">'
-        + presets.map(function (preset) { return '<button data-production-preset="' + preset[0] + '" class="' + (preset[0] === 'all' && state.pendingAllTime ? 'active' : '') + '">' + preset[1] + '</button>'; }).join('')
+        + presets.map(function (preset) { return '<button data-production-preset="' + preset[0] + '" class="' + (preset[0] === activePreset ? 'active' : '') + '">' + preset[1] + '</button>'; }).join('')
         + '</aside><div class="live-date-main"><div class="live-date-tabs"><span>Reporting period</span></div>'
         + '<div class="live-date-summary" id="live-date-summary">' + escapeHtml(state.pendingAllTime ? 'All available warehouse history' : humanDate(start) + ' – ' + humanDate(end)) + '</div>'
         + '<div class="live-date-fields"><label>From<input id="live-date-start" type="date" min="' + bounds.min + '" max="' + bounds.max + '" value="' + start + '"></label>'
