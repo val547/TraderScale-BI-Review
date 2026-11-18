@@ -29,6 +29,32 @@
       && /^\d{4}-\d{2}-\d{2}$/.test(String(payload.asOf || ''));
   }
 
+  function loadSnapshot() {
+    function direct() {
+      return fetch(SNAPSHOT_ENDPOINT, { cache: 'default', credentials: 'same-origin' }).then(async function (response) {
+        if (!response.ok) throw new Error('Live snapshot request failed.');
+        return { payload: await response.json(), revision: response.headers.get('etag') || '' };
+      });
+    }
+    if (!window.Worker) return direct();
+    return new Promise(function (resolve, reject) {
+      var worker = new Worker('snapshot-worker.js?v=20261118-daily-cache');
+      var settled = false;
+      function finish(callback, value) {
+        if (settled) return;
+        settled = true;
+        worker.terminate();
+        callback(value);
+      }
+      worker.onmessage = function (event) {
+        if (event.data && event.data.ok) finish(resolve, event.data);
+        else finish(reject, new Error(event.data && event.data.error || 'Live snapshot worker failed.'));
+      };
+      worker.onerror = function () { finish(reject, new Error('Live snapshot worker failed.')); };
+      worker.postMessage({ url: SNAPSHOT_ENDPOINT });
+    }).catch(function () { return direct(); });
+  }
+
   function unique(values) {
     return Array.from(new Set(values.filter(function (value) {
       return value != null && value !== '' && value !== 'Unknown';
@@ -1396,11 +1422,11 @@
   async function start() {
     discardDemoData();
     refreshPresentation();
-    var snapshotRequest = fetch(SNAPSHOT_ENDPOINT, { cache: 'no-cache', credentials: 'same-origin' });
+    var snapshotRequest = loadSnapshot();
     var manifestRequest = fetch(STATUS_ENDPOINT, { cache: 'no-store' });
     try {
       var response = await snapshotRequest;
-      if (!response.ok || !applySnapshot(await response.json())) throw new Error('Invalid live snapshot.');
+      if (!applySnapshot(response.payload)) throw new Error('Invalid live snapshot.');
     } catch (error) {
       state.error = error;
       state.mode = 'error';

@@ -22,8 +22,8 @@ const dashboardRoot = fileURLToPath(new URL("./public/dashboard/", import.meta.u
 const sessionValue = createHash("sha256").update(`traderscale-bi:${accessEmail}:${accessPassword}`).digest("hex");
 const cookieName = "traderscale_bi_session";
 const oauthStateCookie = "traderscale_google_oauth_state";
-const snapshotFreshMs = 5 * 60_000;
-const snapshotStaleMs = 6 * 60 * 60_000;
+const snapshotFreshMs = 24 * 60 * 60_000;
+const snapshotStaleMs = 7 * 24 * 60 * 60_000;
 type SnapshotCache = {
   freshUntil: number;
   staleUntil: number;
@@ -103,7 +103,7 @@ function sendSnapshot(request: IncomingMessage, response: ServerResponse, cache:
   const commonHeaders = {
     ...securityHeaders(),
     "content-type": "application/json; charset=utf-8",
-    "cache-control": "private, max-age=0, must-revalidate",
+    "cache-control": "private, max-age=86400, stale-while-revalidate=3600",
     etag: cache.etag,
     vary: "accept-encoding",
     "x-snapshot-age": String(Math.max(0, Math.floor((Date.now() - cache.generatedAt) / 1000))),
@@ -289,7 +289,19 @@ const server = createServer(async (request, response) => {
   if (url.pathname === "/api/bi/snapshot" && request.method === "GET") {
     try {
       const cache = await currentSnapshot();
-      if (url.searchParams.get("view") === "affiliate-diagnostics") {
+      if (url.searchParams.get("view") === "meta") {
+        const value = cache.value as { schemaVersion?: number; mode?: string; asOf?: string; currency?: string; quality?: unknown };
+        send(response, 200, JSON.stringify({
+          schemaVersion: value.schemaVersion,
+          mode: value.mode,
+          asOf: value.asOf,
+          currency: value.currency,
+          quality: value.quality,
+          revision: cache.etag,
+          generatedAt: new Date(cache.generatedAt).toISOString(),
+          refreshCadence: "daily",
+        }), "application/json; charset=utf-8");
+      } else if (url.searchParams.get("view") === "affiliate-diagnostics") {
         send(response, 200, JSON.stringify(affiliateSnapshotDiagnostics(cache.value)), "application/json; charset=utf-8");
       } else {
         sendSnapshot(request, response, cache);

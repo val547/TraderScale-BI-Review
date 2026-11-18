@@ -4,7 +4,7 @@ import { affiliateSnapshotDiagnostics, buildSnapshot } from "../../../../lib/bi-
 
 export const dynamic = "force-dynamic";
 
-let cachedSnapshot: { expiresAt: number; value: unknown } | null = null;
+let cachedSnapshot: { expiresAt: number; generatedAt: number; revision: string; value: unknown } | null = null;
 
 function json(value: unknown, status = 200) {
   return Response.json(value, {
@@ -24,11 +24,16 @@ export async function GET(request: Request) {
   try {
     if (!cachedSnapshot || cachedSnapshot.expiresAt <= Date.now()) {
       const value = await buildSnapshot(env.GOOGLE_SERVICE_ACCOUNT_JSON ?? "");
-      cachedSnapshot = { expiresAt: Date.now() + 5 * 60 * 1000, value };
+      const generatedAt = Date.now();
+      cachedSnapshot = { expiresAt: generatedAt + 24 * 60 * 60 * 1000, generatedAt, revision: `daily-${generatedAt}`, value };
     }
-    return json(new URL(request.url).searchParams.get("view") === "affiliate-diagnostics"
-      ? affiliateSnapshotDiagnostics(cachedSnapshot.value)
-      : cachedSnapshot.value);
+    const view = new URL(request.url).searchParams.get("view");
+    if (view === "meta") {
+      const value = cachedSnapshot.value as { schemaVersion?: number; mode?: string; asOf?: string; currency?: string; quality?: unknown };
+      return json({ schemaVersion: value.schemaVersion, mode: value.mode, asOf: value.asOf, currency: value.currency,
+        quality: value.quality, revision: cachedSnapshot.revision, generatedAt: new Date(cachedSnapshot.generatedAt).toISOString(), refreshCadence: "daily" });
+    }
+    return json(view === "affiliate-diagnostics" ? affiliateSnapshotDiagnostics(cachedSnapshot.value) : cachedSnapshot.value);
   } catch (error) {
     const detail = error instanceof Error ? error.message : "Unknown error";
     console.error("BI snapshot failed", detail);
