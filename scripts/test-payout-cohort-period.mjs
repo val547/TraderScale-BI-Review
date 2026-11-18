@@ -23,6 +23,12 @@ assert.match(moduleSource, /row\.warehouseCustomerId\|\|row\.customerId/,
   'Affiliate payout attribution must reconcile the warehouse customer identity used by the released P&L view.');
 assert.match(moduleSource, /row\.affiliate==='none'\|\|!knownAttribution\(row\.affiliate\)/,
   'No-affiliate defaults must still be eligible for released P&L reconciliation.');
+assert.match(moduleSource, /releasedAffiliate=clean\(p\.affiliateAttributionSource\)&&clean\(p\.affiliateId\)/,
+  'Browser payout rows must preserve the released affiliate attribution shipped by the live snapshot.');
+assert.match(moduleSource, /affiliateId=releasedAffiliate\?clean\(p\.affiliateId\):/,
+  'A linked order must not overwrite the reconciled payout affiliate supplied by the server.');
+assert.match(moduleSource, /affiliateName:clean\(p\.affiliateName\)\|\|/,
+  'Affiliate grouping must preserve the released partner name even when the local profile map is incomplete.');
 assert.match(moduleSource, /\(data\.affiliatePnl\|\|\[\]\)\.length/,
   'Payout ledger cache must invalidate when released Affiliate P&L rows arrive after the first render.');
 assert.match(moduleSource, /cached\.revision===cacheRevision/,
