@@ -383,13 +383,16 @@ const server = createServer(async (request, response) => {
   if (url.pathname === "/api/performance" && request.method === "POST") {
     try {
       const input = JSON.parse(await readBody(request)) as Record<string, unknown>;
-      const metric = (key: string) => Math.max(0, Math.min(300_000, Number(input[key]) || 0));
+      const boundedMetric = (value: unknown) => Math.max(0, Math.min(1_800_000, Number(value) || 0));
+      const metric = (key: string) => boundedMetric(input[key]);
       if (input.kind === "render") {
         const allowedPages = new Set(["overview", "revenue", "accounts", "pipeline", "affiliates", "competitors", "reports", "marketing", "rebuy", "journey", "profitable-risk", "risk-radar"]);
         const page = allowedPages.has(String(input.page)) ? String(input.page) : "other";
+        const rawBreakdown = input.breakdown && typeof input.breakdown === "object" ? input.breakdown as Record<string, unknown> : {};
+        const breakdown = Object.fromEntries(Object.entries(rawBreakdown).slice(0, 20).map(([key, value]) => [key.slice(0, 40), boundedMetric(value)]));
         lastClientRenders.push({ release: releaseId, recordedAt: new Date().toISOString(), page,
           cached: input.cached === true, totalMs: metric("totalMs"), computeMs: metric("computeMs"),
-          domMs: metric("domMs"), presentationMs: metric("presentationMs") });
+          domMs: metric("domMs"), presentationMs: metric("presentationMs"), breakdown: JSON.stringify(breakdown) });
         if (lastClientRenders.length > 20) lastClientRenders = lastClientRenders.slice(-20);
       } else {
         lastClientPerformance = {
