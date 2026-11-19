@@ -13,6 +13,32 @@
     'pricing', 'marketing', 'rebuy', 'updates', 'ltv', 'client-profit', 'journey',
     'profitable-risk', 'risk-radar', 'payout-exposure', 'payout-consistency', 'reports', 'settings'
   ]);
+  var competitorRequest = null;
+
+  function loadCompetitorData() {
+    if (window.BICompetitorMonitorData) return Promise.resolve(window.BICompetitorMonitorData);
+    if (competitorRequest) return competitorRequest;
+    competitorRequest = fetch(COMPETITOR_ENDPOINT, { cache: 'no-store' })
+      .then(function (response) {
+        if (!response.ok) throw new Error('Competitor baseline request failed.');
+        return response.json();
+      })
+      .then(function (payload) {
+        window.BICompetitorMonitorData = payload && payload.mode === 'official-sites' ? payload : null;
+        window.dispatchEvent(new Event('bi:refresh'));
+        return window.BICompetitorMonitorData;
+      })
+      .catch(function () {
+        window.BICompetitorMonitorData = null;
+        return null;
+      })
+      .finally(function () { competitorRequest = null; });
+    return competitorRequest;
+  }
+
+  function loadCompetitorWhenNeeded() {
+    if (location.hash.slice(1) === 'competitors') void loadCompetitorData();
+  }
 
   function replaceArray(target, source) {
     if (!Array.isArray(target) || !Array.isArray(source)) return false;
@@ -40,6 +66,13 @@
   }
 
   function loadSnapshotOnce() {
+    function parseTransferred(result) {
+      if (!result || !result.buffer) return result;
+      var text = new TextDecoder('utf-8').decode(result.buffer);
+      var payload = JSON.parse(text);
+      text = '';
+      return { payload: payload, revision: result.revision || '' };
+    }
     function direct() {
       return fetch(SNAPSHOT_ENDPOINT, { cache: 'no-cache', credentials: 'same-origin' }).then(async function (response) {
         if (!response.ok) throw new Error('Live snapshot request failed.');
@@ -57,7 +90,10 @@
         callback(value);
       }
       worker.onmessage = function (event) {
-        if (event.data && event.data.ok) finish(resolve, event.data);
+        if (event.data && event.data.ok) {
+          try { finish(resolve, parseTransferred(event.data)); }
+          catch (error) { finish(reject, error); }
+        }
         else finish(reject, new Error(event.data && event.data.error || 'Live snapshot worker failed.'));
       };
       worker.onerror = function () { finish(reject, new Error('Live snapshot worker failed.')); };
@@ -163,7 +199,7 @@
         account.channel = affiliateId ? 'Affiliate' : 'Unknown';
         account.affiliateId = affiliateId;
       }
-      return {
+      return Object.assign(row, {
         id: row.id, date: row.date, customerId: row.customerId,
         customerName: profile.name || (account && account.customerName) || 'No live data',
         programme: row.programme && row.programme !== 'Unknown' ? row.programme : account ? account.programme : 'Unknown',
@@ -180,7 +216,7 @@
         payoutCost: pnl ? pnl.payout : null, netSales: Number(row.netRevenue) || 0,
         contribution: pnl && pnl.revenueRows ? (Number(row.netRevenue) || 0) - pnl.commission - pnl.payout : null,
         isNewCustomer: !!row.isNewCustomer, liveCostCoverage: !!(pnl && pnl.revenueRows), partialCostCoverage: !!(pnl && !pnl.complete)
-      };
+      });
     });
 
     var orderRollups = {};
@@ -195,7 +231,7 @@
     });
     var customers = (data.customers || []).map(function (row) {
       var rollup = orderRollups[row.id] || {};
-      return Object.assign({}, row, {
+      return Object.assign(row, {
         id: row.id, name: row.name, email: '', country: row.country,
         firstPurchase: row.firstOrderAt, programme: rollup.programme || 'Unknown', stage: row.status,
         accounts: row.accountCount, lastActive: row.lastOrderAt, totalSpend: Number(row.revenue) || 0,
@@ -638,7 +674,7 @@
     var liveAccounts = data.accounts.map(function (account) {
       var released = withdrawableByAccount[String(account.id)] || withdrawableByAccount['login:' + String(account.login)] || null;
       if (!released) return account;
-      return Object.assign({}, account, {
+      return Object.assign(account, {
         payoutAccrued: released.estimatedWithdrawable,
         payoutApproved: released.pendingPayout,
         consistency: released.consistencyActual,
@@ -660,7 +696,7 @@
     replaceArray(window.BIData.affiliates, adapted.affiliates);
     replaceArray(window.BIData.customers, adapted.customers);
     replaceArray(window.BIData.riskCases, (data.riskFindings || []).map(function (finding) {
-      return {
+      return Object.assign(finding, {
         id: finding.id || (finding.rule + ':' + finding.accountNr),
         customerId: finding.customerId, customerName: finding.customerName,
         accountId: finding.accountId, account: finding.accountNr,
@@ -669,7 +705,7 @@
         type: finding.rule, severity: finding.severity, status: 'Needs review',
         openedAt: finding.findingAt, rule: finding.rule,
         evidence: [finding.evidence, finding.symbol ? 'Symbol: ' + finding.symbol : ''].filter(Boolean)
-      };
+      });
     }));
     window.BIData.affiliatePnl = adapted.affiliatePnl.slice();
     window.BIData.productionProfitability = Array.isArray(data.profitability) ? data.profitability.slice() : [];
@@ -1486,23 +1522,16 @@
       } catch (error) {
         state.error = state.error || error;
       }
-      try {
-        var competitorResponse = await fetch(COMPETITOR_ENDPOINT, { cache: 'no-store' });
-        if (competitorResponse.ok) {
-          var competitorPayload = await competitorResponse.json();
-          window.BICompetitorMonitorData = competitorPayload && competitorPayload.mode === 'official-sites' ? competitorPayload : null;
-        }
-      } catch {
-        window.BICompetitorMonitorData = null;
-      }
       refreshPresentation();
     }, 250);
+    loadCompetitorWhenNeeded();
   }
 
   window.BIProductionConnector = { state: state, applySnapshot: applySnapshot, start: start, inDateRange: inDateRange, dateLabel: dateLabel, dateRange: dateRange, refreshPresentation: refreshPresentation, renderOwnerOverview: ownerOverviewPage };
   document.addEventListener('click', function (event) {
     var pageLink = event.target.closest('[data-page]');
     if (pageLink) {
+      if (pageLink.getAttribute('data-page') === 'competitors') void loadCompetitorData();
       // The dashboard render calls refreshPresentation synchronously.
       return;
     }
@@ -1550,6 +1579,7 @@
       setTimeout(refreshPresentation, 0);
     }
   });
+  window.addEventListener('hashchange', loadCompetitorWhenNeeded);
   document.addEventListener('input', function (event) {
     if (event.target.id !== 'live-date-start' && event.target.id !== 'live-date-end') return;
     state.pendingAllTime = false;

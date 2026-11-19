@@ -3,7 +3,8 @@ import { createReadStream, existsSync, statSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
-import { gzipSync } from "node:zlib";
+import { pipeline } from "node:stream/promises";
+import { createGzip, gzipSync } from "node:zlib";
 import { affiliateSnapshotDiagnostics, buildSnapshot } from "./lib/bi-snapshot.ts";
 
 const port = Number(process.env.PORT || 3000);
@@ -322,14 +323,26 @@ const server = createServer(async (request, response) => {
     send(response, 404, "Not found");
     return;
   }
+  const extension = extname(file).toLowerCase();
+  const compressible = new Set([".css", ".html", ".js", ".json", ".svg"]).has(extension);
+  const useGzip = compressible && String(request.headers["accept-encoding"] || "").includes("gzip");
   response.writeHead(200, {
     ...securityHeaders(),
-    "content-type": mimeTypes[extname(file).toLowerCase()] || "application/octet-stream",
+    "content-type": mimeTypes[extension] || "application/octet-stream",
     "cache-control": file.endsWith("index.html") || file.endsWith("production-connector.js")
       ? "no-store"
       : "private, max-age=300",
+    ...(useGzip ? { "content-encoding": "gzip", vary: "accept-encoding" } : {}),
   });
-  createReadStream(file).pipe(response);
+  if (useGzip) {
+    try {
+      await pipeline(createReadStream(file), createGzip({ level: 6 }), response);
+    } catch (error) {
+      if (!response.destroyed) response.destroy(error instanceof Error ? error : undefined);
+    }
+  } else {
+    createReadStream(file).pipe(response);
+  }
 });
 
 server.listen(port, "0.0.0.0", () => {
