@@ -32,6 +32,8 @@ assert.match(connector, /navigator\.sendBeacon\('\/api\/performance'/,
   'Production boot must report anonymous phase timings for evidence-based optimization.');
 assert.match(connector, /function recordRenderTiming\(sample\)/,
   'Production tab changes must report bounded anonymous render timings.');
+assert.doesNotMatch(connector, /window\.dispatchEvent\(new HashChangeEvent\('hashchange'\)\)/,
+  'Applying one live snapshot must not synchronously render the same page twice.');
 assert.match(dashboard, /recordRenderTiming\(\{page,totalMs:elapsed/,
   'Every completed page render must expose compute, DOM and presentation phases.');
 assert.match(connector, /OPTIONAL_ENDPOINTS = \{[\s\S]*marketing:[\s\S]*rebuy:/,

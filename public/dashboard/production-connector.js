@@ -813,7 +813,6 @@
     state.mode = 'production';
     document.documentElement.classList.add('production-mode');
     notifyProductionReady();
-    window.dispatchEvent(new HashChangeEvent('hashchange'));
     return true;
   }
 
