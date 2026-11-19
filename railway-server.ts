@@ -14,6 +14,7 @@ const accessPassword = process.env.BI_ACCESS_PASSWORD || "";
 const googleClientId = process.env.GOOGLE_OAUTH_CLIENT_ID || "";
 const googleClientSecret = process.env.GOOGLE_OAUTH_CLIENT_SECRET || "";
 const appBaseUrl = (process.env.APP_BASE_URL || "").replace(/\/$/, "");
+const releaseId = process.env.RAILWAY_GIT_COMMIT_SHA || "local";
 const allowedGoogleEmails = (process.env.BI_ALLOWED_GOOGLE_EMAILS || "")
   .split(",")
   .map((value) => value.trim().toLowerCase())
@@ -36,6 +37,8 @@ type SnapshotCache = {
 };
 let snapshotCache: SnapshotCache | null = null;
 let snapshotRefresh: Promise<SnapshotCache> | null = null;
+let snapshotWarmupError = "";
+const snapshotWarmupStartedAt = Date.now();
 
 if (!serviceAccountJson) throw new Error("GOOGLE_SERVICE_ACCOUNT_JSON is required.");
 if (!/^\S+@\S+\.\S+$/.test(accessEmail)) throw new Error("BI_ACCESS_EMAIL must be a valid email address.");
@@ -100,6 +103,16 @@ async function currentSnapshot() {
     return snapshotCache;
   }
   return refreshSnapshot();
+}
+
+function warmSnapshotUntilReady() {
+  void refreshSnapshot().then(() => {
+    snapshotWarmupError = "";
+  }).catch((error) => {
+    snapshotWarmupError = error instanceof Error ? error.message : "Unknown error";
+    console.error("Initial BI snapshot warmup failed", snapshotWarmupError);
+    setTimeout(warmSnapshotUntilReady, 15_000);
+  });
 }
 
 function sendSnapshot(request: IncomingMessage, response: ServerResponse, cache: SnapshotCache, view: string | null = null) {
@@ -225,7 +238,14 @@ const server = createServer(async (request, response) => {
   const url = new URL(request.url || "/", `http://${request.headers.host || "localhost"}`);
 
   if (url.pathname === "/health") {
-    send(response, 200, JSON.stringify({ ok: true }), "application/json; charset=utf-8");
+    const ready = Boolean(snapshotCache);
+    send(response, ready ? 200 : 503, JSON.stringify({
+      ok: ready,
+      status: ready ? "ready" : "warming",
+      warmupSeconds: Math.max(0, Math.floor((Date.now() - snapshotWarmupStartedAt) / 1000)),
+      retrying: Boolean(snapshotWarmupError),
+      release: releaseId,
+    }), "application/json; charset=utf-8");
     return;
   }
 
@@ -365,7 +385,5 @@ const server = createServer(async (request, response) => {
 
 server.listen(port, "0.0.0.0", () => {
   console.log(`TraderScale BI listening on port ${port}`);
-  void refreshSnapshot().catch((error) => {
-    console.error("Initial BI snapshot warmup failed", error instanceof Error ? error.message : "Unknown error");
-  });
+  warmSnapshotUntilReady();
 });

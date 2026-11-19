@@ -38,5 +38,11 @@ assert.match(server, /createGzip/,
   'Large static dashboard assets must support streaming gzip.');
 assert.match(server, /useGzip = compressible/,
   'Static gzip must be negotiated rather than applied to binary assets.');
+assert.match(server, /const ready = Boolean\(snapshotCache\)/,
+  'Railway readiness must wait for the daily snapshot instead of routing users to a cold instance.');
+assert.match(server, /ready \? 200 : 503/,
+  'A cold deployment must remain unavailable to the load balancer until live data is ready.');
+assert.match(server, /setTimeout\(warmSnapshotUntilReady, 15_000\)/,
+  'Failed warehouse warmups must retry without exposing a broken application instance.');
 
 console.log('performance architecture: transferable snapshot, lazy competitor data, cached metrics and static gzip passed');
