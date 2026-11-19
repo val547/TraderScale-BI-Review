@@ -52,5 +52,9 @@ assert.match(server, /coreBytes: snapshotCache\?\.variants\.get\("core"\)/,
   'Readiness diagnostics must expose the prepared core transfer size without exposing business data.');
 assert.match(server, /datasetBytes: Object\.fromEntries/,
   'Readiness diagnostics must expose per-dataset transfer sizes for evidence-based page splitting.');
+assert.match(server, /brotliCompressSync/,
+  'The unchanged live snapshot must be precompressed with Brotli during warmup.');
+assert.match(server, /acceptedEncoding\.includes\("br"\)/,
+  'Modern browsers must receive the smaller Brotli representation without changing the data contract.');
 
 console.log('performance architecture: transferable snapshot, lazy competitor data, cached metrics and static gzip passed');

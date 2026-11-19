@@ -4,7 +4,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
 import { pipeline } from "node:stream/promises";
-import { createGzip, gzipSync } from "node:zlib";
+import { brotliCompressSync, constants as zlibConstants, createGzip, gzipSync } from "node:zlib";
 import { affiliateSnapshotDiagnostics, buildSnapshot, snapshotView } from "./lib/bi-snapshot.ts";
 
 const port = Number(process.env.PORT || 3000);
@@ -33,7 +33,8 @@ type SnapshotCache = {
   value: unknown;
   gzip: Buffer;
   etag: string;
-  variants: Map<string, { value: unknown; gzip: Buffer; etag: string }>;
+  brotli: Buffer;
+  variants: Map<string, { value: unknown; gzip: Buffer; brotli: Buffer; etag: string }>;
 };
 let snapshotCache: SnapshotCache | null = null;
 let snapshotRefresh: Promise<SnapshotCache> | null = null;
@@ -76,16 +77,24 @@ function refreshSnapshot() {
     const value = await buildSnapshot(serviceAccountJson);
     const generatedAt = Date.now();
     const gzip = gzipSync(JSON.stringify(value), { level: 6 });
-    const variants = new Map<string, { value: unknown; gzip: Buffer; etag: string }>();
+    const brotli = brotliCompressSync(JSON.stringify(value), {
+      params: { [zlibConstants.BROTLI_PARAM_QUALITY]: 6 },
+    });
+    const variants = new Map<string, { value: unknown; gzip: Buffer; brotli: Buffer; etag: string }>();
     for (const view of [
       "core", "marketing", "rebuy", "accounts", "payouts", "orders", "profitability",
       "affiliates", "affiliatePnl", "customers", "withdrawable", "riskFindings",
     ]) {
       const variantValue = snapshotView(value, view);
-      const variantGzip = gzipSync(JSON.stringify(variantValue), { level: 6 });
+      const serialized = JSON.stringify(variantValue);
+      const variantGzip = gzipSync(serialized, { level: 6 });
+      const variantBrotli = brotliCompressSync(serialized, {
+        params: { [zlibConstants.BROTLI_PARAM_QUALITY]: 6 },
+      });
       variants.set(view, {
         value: variantValue,
         gzip: variantGzip,
+        brotli: variantBrotli,
         etag: `"${createHash("sha256").update(variantGzip).digest("base64url")}"`,
       });
     }
@@ -95,6 +104,7 @@ function refreshSnapshot() {
       generatedAt,
       value,
       gzip,
+      brotli,
       etag: `"${createHash("sha256").update(gzip).digest("base64url")}"`,
       variants,
     } satisfies SnapshotCache;
@@ -131,18 +141,23 @@ function warmSnapshotUntilReady() {
 function sendSnapshot(request: IncomingMessage, response: ServerResponse, cache: SnapshotCache, view: string | null = null) {
   var value = cache.value;
   var gzip = cache.gzip;
+  var brotli = cache.brotli;
   var etag = cache.etag;
   if (view && view !== "full") {
     var variant = cache.variants.get(view);
     if (!variant) {
       value = snapshotView(cache.value, view);
       gzip = gzipSync(JSON.stringify(value), { level: 6 });
+      brotli = brotliCompressSync(JSON.stringify(value), {
+        params: { [zlibConstants.BROTLI_PARAM_QUALITY]: 6 },
+      });
       etag = `"${createHash("sha256").update(gzip).digest("base64url")}"`;
-      variant = { value, gzip, etag };
+      variant = { value, gzip, brotli, etag };
       cache.variants.set(view, variant);
     }
     value = variant.value;
     gzip = variant.gzip;
+    brotli = variant.brotli;
     etag = variant.etag;
   }
   const commonHeaders = {
@@ -164,7 +179,17 @@ function sendSnapshot(request: IncomingMessage, response: ServerResponse, cache:
     response.end();
     return;
   }
-  if (String(request.headers["accept-encoding"] || "").includes("gzip")) {
+  const acceptedEncoding = String(request.headers["accept-encoding"] || "");
+  if (acceptedEncoding.includes("br")) {
+    response.writeHead(200, {
+      ...commonHeaders,
+      "content-encoding": "br",
+      "content-length": String(brotli.byteLength),
+    });
+    response.end(brotli);
+    return;
+  }
+  if (acceptedEncoding.includes("gzip")) {
     response.writeHead(200, {
       ...commonHeaders,
       "content-encoding": "gzip",
@@ -262,6 +287,7 @@ const server = createServer(async (request, response) => {
       retrying: Boolean(snapshotWarmupError),
       release: releaseId,
       coreBytes: snapshotCache?.variants.get("core")?.gzip.byteLength ?? 0,
+      coreBrotliBytes: snapshotCache?.variants.get("core")?.brotli.byteLength ?? 0,
       fullBytes: snapshotCache?.gzip.byteLength ?? 0,
       datasetBytes: Object.fromEntries([
         "accounts", "payouts", "orders", "profitability", "affiliates", "affiliatePnl",
