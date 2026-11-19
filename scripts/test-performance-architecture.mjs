@@ -30,6 +30,10 @@ assert.match(connector, /partitioned\(\)\.catch\(direct\)/,
   'The exact monolithic core snapshot must remain the fallback if partitioned transfer fails.');
 assert.match(connector, /navigator\.sendBeacon\('\/api\/performance'/,
   'Production boot must report anonymous phase timings for evidence-based optimization.');
+assert.match(connector, /function recordRenderTiming\(sample\)/,
+  'Production tab changes must report bounded anonymous render timings.');
+assert.match(dashboard, /recordRenderTiming\(\{page,totalMs:elapsed/,
+  'Every completed page render must expose compute, DOM and presentation phases.');
 assert.match(connector, /OPTIONAL_ENDPOINTS = \{[\s\S]*marketing:[\s\S]*rebuy:/,
   'Marketing and rebuy datasets must load independently when their reports are opened.');
 assert.match(snapshot, /export function snapshotView/,

@@ -40,6 +40,7 @@ let snapshotCache: SnapshotCache | null = null;
 let snapshotRefresh: Promise<SnapshotCache> | null = null;
 let snapshotWarmupError = "";
 let lastClientPerformance: Record<string, number | string> | null = null;
+let lastClientRenders: Array<Record<string, number | string | boolean>> = [];
 const snapshotWarmupStartedAt = Date.now();
 
 if (!serviceAccountJson) throw new Error("GOOGLE_SERVICE_ACCOUNT_JSON is required.");
@@ -295,6 +296,7 @@ const server = createServer(async (request, response) => {
         "customers", "marketing", "withdrawable", "riskFindings", "rebuy",
       ].map((view) => [view, snapshotCache?.variants.get(view)?.gzip.byteLength ?? 0])),
       clientPerformance: lastClientPerformance,
+      clientRenders: lastClientRenders,
     }), "application/json; charset=utf-8");
     return;
   }
@@ -382,15 +384,24 @@ const server = createServer(async (request, response) => {
     try {
       const input = JSON.parse(await readBody(request)) as Record<string, unknown>;
       const metric = (key: string) => Math.max(0, Math.min(300_000, Number(input[key]) || 0));
-      lastClientPerformance = {
-        release: releaseId,
-        recordedAt: new Date().toISOString(),
-        transport: input.transport === "partitioned" ? "partitioned" : "fallback",
-        bootToSnapshotMs: metric("bootToSnapshotMs"),
-        applyMs: metric("applyMs"),
-        firstRenderMs: metric("firstRenderMs"),
-        totalMs: metric("totalMs"),
-      };
+      if (input.kind === "render") {
+        const allowedPages = new Set(["overview", "revenue", "accounts", "pipeline", "affiliates", "competitors", "reports", "marketing", "rebuy", "journey", "profitable-risk", "risk-radar"]);
+        const page = allowedPages.has(String(input.page)) ? String(input.page) : "other";
+        lastClientRenders.push({ release: releaseId, recordedAt: new Date().toISOString(), page,
+          cached: input.cached === true, totalMs: metric("totalMs"), computeMs: metric("computeMs"),
+          domMs: metric("domMs"), presentationMs: metric("presentationMs") });
+        if (lastClientRenders.length > 20) lastClientRenders = lastClientRenders.slice(-20);
+      } else {
+        lastClientPerformance = {
+          release: releaseId,
+          recordedAt: new Date().toISOString(),
+          transport: input.transport === "partitioned" ? "partitioned" : "fallback",
+          bootToSnapshotMs: metric("bootToSnapshotMs"),
+          applyMs: metric("applyMs"),
+          firstRenderMs: metric("firstRenderMs"),
+          totalMs: metric("totalMs"),
+        };
+      }
       send(response, 204, "");
     } catch {
       send(response, 400, JSON.stringify({ error: "Invalid performance sample." }), "application/json; charset=utf-8");

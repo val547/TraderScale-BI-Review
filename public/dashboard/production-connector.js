@@ -122,6 +122,14 @@
     }, 0);
   }
 
+  function recordRenderTiming(sample) {
+    var body = JSON.stringify(Object.assign({kind:'render'}, sample || {}));
+    try {
+      if (navigator.sendBeacon) navigator.sendBeacon('/api/performance', new Blob([body], {type:'application/json'}));
+      else fetch('/api/performance', {method:'POST', credentials:'same-origin', keepalive:true, headers:{'content-type':'application/json'}, body:body}).catch(function () {});
+    } catch (_) {}
+  }
+
   function loadSnapshotOnce() {
     function parseTransferred(result) {
       if (!result || !result.buffer) return result;
@@ -1615,7 +1623,7 @@
     loadCompetitorWhenNeeded();
   }
 
-  window.BIProductionConnector = { state: state, applySnapshot: applySnapshot, start: start, inDateRange: inDateRange, dateLabel: dateLabel, dateRange: dateRange, refreshPresentation: refreshPresentation, renderOwnerOverview: ownerOverviewPage };
+  window.BIProductionConnector = { state: state, applySnapshot: applySnapshot, start: start, inDateRange: inDateRange, dateLabel: dateLabel, dateRange: dateRange, refreshPresentation: refreshPresentation, renderOwnerOverview: ownerOverviewPage, recordRenderTiming: recordRenderTiming };
   document.addEventListener('click', function (event) {
     var pageLink = event.target.closest('[data-page]');
     if (!pageLink) return;
