@@ -76,6 +76,16 @@ function refreshSnapshot() {
     const value = await buildSnapshot(serviceAccountJson);
     const generatedAt = Date.now();
     const gzip = gzipSync(JSON.stringify(value), { level: 6 });
+    const variants = new Map<string, { value: unknown; gzip: Buffer; etag: string }>();
+    for (const view of ["core", "marketing", "rebuy"]) {
+      const variantValue = snapshotView(value, view);
+      const variantGzip = gzipSync(JSON.stringify(variantValue), { level: 6 });
+      variants.set(view, {
+        value: variantValue,
+        gzip: variantGzip,
+        etag: `"${createHash("sha256").update(variantGzip).digest("base64url")}"`,
+      });
+    }
     const cache = {
       freshUntil: generatedAt + snapshotFreshMs,
       staleUntil: generatedAt + snapshotStaleMs,
@@ -83,7 +93,7 @@ function refreshSnapshot() {
       value,
       gzip,
       etag: `"${createHash("sha256").update(gzip).digest("base64url")}"`,
-      variants: new Map(),
+      variants,
     } satisfies SnapshotCache;
     snapshotCache = cache;
     return cache;
@@ -248,6 +258,8 @@ const server = createServer(async (request, response) => {
       warmupSeconds: Math.max(0, Math.floor((Date.now() - snapshotWarmupStartedAt) / 1000)),
       retrying: Boolean(snapshotWarmupError),
       release: releaseId,
+      coreBytes: snapshotCache?.variants.get("core")?.gzip.byteLength ?? 0,
+      fullBytes: snapshotCache?.gzip.byteLength ?? 0,
     }), "application/json; charset=utf-8");
     return;
   }
