@@ -37,6 +37,10 @@ assert.match(snapshot, /marketing: null, rebuy: \[\]/,
 
 assert.match(dashboard, /if\(!cacheHit\)\{const metricsStarted=performance\.now\(\),pageMetrics=D\.getMetrics\(filters\)/,
   'Global metrics must be calculated only on a page-cache miss.');
+assert.match(dashboard, /const riskCaseIndex=new Map\(\),riskCaseOrder=new Map\(\)/,
+  'Risk cases must be indexed once instead of rescanning the full ledger for every account.');
+assert.match(dashboard, /const cases=casesFor\(account\)/,
+  'Account priority calculations must use the order-preserving risk-case index.');
 assert.match(dashboard, /pageHtmlCache\.size>=36/,
   'The page cache must retain a complete navigation pass.');
 

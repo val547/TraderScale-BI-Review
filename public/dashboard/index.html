@@ -4700,12 +4700,24 @@ if (location.protocol === 'file:') document.documentElement.classList.remove('pr
     const radar=window.BIRiskRadarData ? window.BIRiskRadarData.getReport({...ctx,local:{...local,radarScope:null,radarStatus:'all',radarPriority:'all',radarSearch:''}}) : {accountAlerts:{}};
     const funded=window.BIPipeline ? window.BIPipeline.getSummary(ctx).funded : [];
     const moneyMap=new Map(funded.map(row=>[String(row.id),row]));
+    const riskCaseIndex=new Map(),riskCaseOrder=new Map();
+    (data.riskCases||[]).forEach((item,index)=>{
+      riskCaseOrder.set(item,index);
+      const keys=[];
+      if(item.accountId!=null&&String(item.accountId)!=='')keys.push('id:'+String(item.accountId));
+      if(item.account!=null&&String(item.account)!=='')keys.push('login:'+String(item.account));
+      keys.forEach(key=>{if(!riskCaseIndex.has(key))riskCaseIndex.set(key,[]);riskCaseIndex.get(key).push(item);});
+    });
+    const casesFor=account=>{
+      const candidates=[...(riskCaseIndex.get('id:'+String(account.id))||[]),...(riskCaseIndex.get('login:'+String(account.login))||[])];
+      return [...new Set(candidates)].sort((a,b)=>riskCaseOrder.get(a)-riskCaseOrder.get(b)).filter(item=>((local.riskStatuses||{})[item.id]||item.status)!=='Resolved');
+    };
     const scoped=(data.accounts||[]).filter(a=>a.status==='Active'&&['programme','country','channel'].every(key=>!filters[key]||filters[key]==='all'||a[key]===filters[key])&&(!filters.size||filters.size==='all'||a.accountSize===Number(filters.size)));
     const activeClientCounts=new Map();scoped.forEach(a=>activeClientCounts.set(a.customerId,(activeClientCounts.get(a.customerId)||0)+1));
     const accounts=scoped.map(account=>{
       const dailyPct=ratio(account.dailyDrawdownUsed,account.dailyDrawdownLimit),maxPct=ratio(account.maxDrawdownUsed,account.maxDrawdownLimit),lossUsedPct=Math.max(dailyPct,maxPct);
       const alerts=(radar.accountAlerts||{})[String(account.id)]||[];
-      const cases=(data.riskCases||[]).filter(item=>(String(item.accountId)===String(account.id)||String(item.account)===String(account.login))&&((local.riskStatuses||{})[item.id]||item.status)!=='Resolved');
+      const cases=casesFor(account);
       const signals=alerts.map(alert=>({kind:'radar',label:alert.title,severity:alert.priority==='High'?'High':'Elevated',scope:'group',id:alert.id,reviewStatus:alert.reviewStatus}));
       cases.forEach(item=>signals.push({kind:'case',label:item.type,severity:item.severity==='High'?'High':'Elevated',scope:'account',id:item.id}));
       signals.sort((a,b)=>levels[b.severity]-levels[a.severity]||a.kind.localeCompare(b.kind)||a.id.localeCompare(b.id));
