@@ -138,7 +138,10 @@ function sendSnapshot(request: IncomingMessage, response: ServerResponse, cache:
     // The warehouse result is still generated once per day in memory, but the
     // browser must revalidate its ETag so a deployment cannot keep an older
     // snapshot schema or attribution mapping for another 24 hours.
-    "cache-control": "private, max-age=0, must-revalidate, stale-if-error=3600",
+    // The warehouse refresh cadence is daily. Keep an authenticated browser
+    // copy hot for one hour and allow it to be shown immediately while a new
+    // deployment or daily refresh revalidates in the background.
+    "cache-control": "private, max-age=3600, stale-while-revalidate=86400, stale-if-error=604800",
     etag,
     vary: "accept-encoding",
     "x-snapshot-age": String(Math.max(0, Math.floor((Date.now() - cache.generatedAt) / 1000))),

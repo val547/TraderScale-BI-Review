@@ -44,5 +44,7 @@ assert.match(server, /ready \? 200 : 503/,
   'A cold deployment must remain unavailable to the load balancer until live data is ready.');
 assert.match(server, /setTimeout\(warmSnapshotUntilReady, 15_000\)/,
   'Failed warehouse warmups must retry without exposing a broken application instance.');
+assert.match(server, /max-age=3600, stale-while-revalidate=86400, stale-if-error=604800/,
+  'Authenticated browsers must reuse the exact live snapshot while a daily refresh or deployment warms in the background.');
 
 console.log('performance architecture: transferable snapshot, lazy competitor data, cached metrics and static gzip passed');
