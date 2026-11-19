@@ -22,6 +22,12 @@ assert.doesNotMatch(connector, /setTimeout\(async function \(\) \{[\s\S]{0,800}f
   'The competitor baseline must not be fetched during every dashboard boot.');
 assert.match(connector, /SNAPSHOT_ENDPOINT = '\/api\/bi\/snapshot\?view=core'/,
   'Initial dashboard boot must request the core snapshot rather than optional report datasets.');
+assert.match(connector, /CORE_DATASETS = \[[\s\S]{0,300}'accounts'[\s\S]{0,300}'riskFindings'/,
+  'The unchanged core contract must be transferred as independently cached datasets.');
+assert.match(connector, /Promise\.all\(CORE_DATASETS\.map/,
+  'Independent live datasets must download in parallel before the dashboard is exposed.');
+assert.match(connector, /partitioned\(\)\.catch\(direct\)/,
+  'The exact monolithic core snapshot must remain the fallback if partitioned transfer fails.');
 assert.match(connector, /OPTIONAL_ENDPOINTS = \{[\s\S]*marketing:[\s\S]*rebuy:/,
   'Marketing and rebuy datasets must load independently when their reports are opened.');
 assert.match(snapshot, /export function snapshotView/,

@@ -4,6 +4,10 @@
   var STATUS_ENDPOINT = 'data/connection-manifest.json';
   var COMPETITOR_ENDPOINT = 'data/competitor-monitor.json';
   var SNAPSHOT_ENDPOINT = '/api/bi/snapshot?view=core';
+  var CORE_DATASETS = [
+    'accounts', 'payouts', 'orders', 'profitability', 'affiliates', 'affiliatePnl',
+    'customers', 'withdrawable', 'riskFindings'
+  ];
   var OPTIONAL_ENDPOINTS = {
     marketing: '/api/bi/snapshot?view=marketing',
     rebuy: '/api/bi/snapshot?view=rebuy'
@@ -117,6 +121,31 @@
         return { payload: await response.json(), revision: response.headers.get('etag') || '' };
       });
     }
+    function partitioned() {
+      return Promise.all(CORE_DATASETS.map(function (name) {
+        return fetch('/api/bi/snapshot?view=' + encodeURIComponent(name), {
+          cache: 'no-cache', credentials: 'same-origin'
+        }).then(function (response) {
+          if (!response.ok) throw new Error('Live ' + name + ' dataset request failed.');
+          return response.json();
+        }).then(function (payload) {
+          if (!validSnapshot(payload)) throw new Error('Invalid live ' + name + ' dataset.');
+          return { name: name, payload: payload };
+        });
+      })).then(function (parts) {
+        var first = parts[0].payload;
+        var data = { marketing: null, rebuy: [] };
+        parts.forEach(function (part) { data[part.name] = part.payload.data[part.name]; });
+        return {
+          payload: {
+            schemaVersion: first.schemaVersion, mode: first.mode, asOf: first.asOf,
+            currency: first.currency, quality: first.quality, data: data
+          },
+          revision: parts.map(function (part) { return part.payload.asOf; }).join(':')
+        };
+      });
+    }
+    if (window.fetch && window.Promise) return partitioned().catch(direct);
     if (!window.Worker) return direct();
     return new Promise(function (resolve, reject) {
       var worker = new Worker('snapshot-worker.js?v=20261118-daily-cache');
