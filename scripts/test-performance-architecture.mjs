@@ -46,9 +46,11 @@ assert.match(server, /setTimeout\(warmSnapshotUntilReady, 15_000\)/,
   'Failed warehouse warmups must retry without exposing a broken application instance.');
 assert.match(server, /max-age=3600, stale-while-revalidate=86400, stale-if-error=604800/,
   'Authenticated browsers must reuse the exact live snapshot while a daily refresh or deployment warms in the background.');
-assert.match(server, /for \(const view of \["core", "marketing", "rebuy"\]\)/,
+assert.match(server, /for \(const view of \[[\s\S]{0,300}"core"[\s\S]{0,300}"riskFindings"/,
   'Every browser-facing snapshot variant must be serialized and compressed during warmup.');
 assert.match(server, /coreBytes: snapshotCache\?\.variants\.get\("core"\)/,
   'Readiness diagnostics must expose the prepared core transfer size without exposing business data.');
+assert.match(server, /datasetBytes: Object\.fromEntries/,
+  'Readiness diagnostics must expose per-dataset transfer sizes for evidence-based page splitting.');
 
 console.log('performance architecture: transferable snapshot, lazy competitor data, cached metrics and static gzip passed');

@@ -1107,6 +1107,11 @@ export function snapshotView(snapshot: unknown, view: string | null) {
   }
   if (view === "marketing") return { ...base, data: { marketing: data.marketing ?? null } };
   if (view === "rebuy") return { ...base, data: { rebuy: data.rebuy ?? [] } };
+  const datasetViews = new Set([
+    "accounts", "payouts", "orders", "profitability", "affiliates", "affiliatePnl",
+    "customers", "withdrawable", "riskFindings",
+  ]);
+  if (view && datasetViews.has(view)) return { ...base, data: { [view]: data[view] ?? (view === "withdrawable" ? null : []) } };
   return snapshot;
 }
 

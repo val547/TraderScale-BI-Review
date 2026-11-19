@@ -77,7 +77,10 @@ function refreshSnapshot() {
     const generatedAt = Date.now();
     const gzip = gzipSync(JSON.stringify(value), { level: 6 });
     const variants = new Map<string, { value: unknown; gzip: Buffer; etag: string }>();
-    for (const view of ["core", "marketing", "rebuy"]) {
+    for (const view of [
+      "core", "marketing", "rebuy", "accounts", "payouts", "orders", "profitability",
+      "affiliates", "affiliatePnl", "customers", "withdrawable", "riskFindings",
+    ]) {
       const variantValue = snapshotView(value, view);
       const variantGzip = gzipSync(JSON.stringify(variantValue), { level: 6 });
       variants.set(view, {
@@ -260,6 +263,10 @@ const server = createServer(async (request, response) => {
       release: releaseId,
       coreBytes: snapshotCache?.variants.get("core")?.gzip.byteLength ?? 0,
       fullBytes: snapshotCache?.gzip.byteLength ?? 0,
+      datasetBytes: Object.fromEntries([
+        "accounts", "payouts", "orders", "profitability", "affiliates", "affiliatePnl",
+        "customers", "marketing", "withdrawable", "riskFindings", "rebuy",
+      ].map((view) => [view, snapshotCache?.variants.get(view)?.gzip.byteLength ?? 0])),
     }), "application/json; charset=utf-8");
     return;
   }
