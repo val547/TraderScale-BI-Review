@@ -28,6 +28,8 @@ assert.match(connector, /Promise\.all\(CORE_DATASETS\.map/,
   'Independent live datasets must download in parallel before the dashboard is exposed.');
 assert.match(connector, /partitioned\(\)\.catch\(direct\)/,
   'The exact monolithic core snapshot must remain the fallback if partitioned transfer fails.');
+assert.match(connector, /navigator\.sendBeacon\('\/api\/performance'/,
+  'Production boot must report anonymous phase timings for evidence-based optimization.');
 assert.match(connector, /OPTIONAL_ENDPOINTS = \{[\s\S]*marketing:[\s\S]*rebuy:/,
   'Marketing and rebuy datasets must load independently when their reports are opened.');
 assert.match(snapshot, /export function snapshotView/,
@@ -66,5 +68,7 @@ assert.match(server, /brotliCompressSync/,
   'The unchanged live snapshot must be precompressed with Brotli during warmup.');
 assert.match(server, /acceptedEncoding\.includes\("br"\)/,
   'Modern browsers must receive the smaller Brotli representation without changing the data contract.');
+assert.match(server, /url\.pathname === "\/api\/performance"/,
+  'The authenticated server must accept bounded anonymous browser timing samples.');
 
 console.log('performance architecture: transferable snapshot, lazy competitor data, cached metrics and static gzip passed');

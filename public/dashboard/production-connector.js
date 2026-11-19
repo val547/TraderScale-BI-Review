@@ -14,7 +14,8 @@
   };
   var state = {
     mode: 'loading', manifest: null, snapshot: null, error: null,
-    dateStart: '', dateEnd: '', dateAllTime: true, datePickerOpen: false, pendingAllTime: true, dateBoundsCache: null
+    dateStart: '', dateEnd: '', dateAllTime: true, datePickerOpen: false, pendingAllTime: true, dateBoundsCache: null,
+    bootStarted: performance.now(), transport: 'fallback', performanceReported: false
   };
   var DATA_PAGES = new Set([
     'overview', 'revenue', 'accounts', 'pipeline', 'affiliates', 'competitors',
@@ -99,11 +100,25 @@
 
   function notifyProductionReady() {
     setTimeout(function () {
+      var renderStarted = performance.now();
       if (window.BIPrototype && typeof window.BIPrototype.refreshProduction === 'function') {
         window.BIPrototype.refreshProduction();
-        return;
+      } else {
+        window.dispatchEvent(new Event('bi:production-ready'));
       }
-      window.dispatchEvent(new Event('bi:production-ready'));
+      if (!state.performanceReported && state.snapshotReadyAt) {
+        state.performanceReported = true;
+        var finished = performance.now();
+        var sample = {
+          transport: state.transport,
+          bootToSnapshotMs: state.snapshotReadyAt - state.bootStarted,
+          applyMs: state.applyFinishedAt - state.applyStartedAt,
+          firstRenderMs: finished - renderStarted,
+          totalMs: finished - state.bootStarted
+        };
+        if (navigator.sendBeacon) navigator.sendBeacon('/api/performance', new Blob([JSON.stringify(sample)], {type:'application/json'}));
+        else fetch('/api/performance', {method:'POST', credentials:'same-origin', keepalive:true, headers:{'content-type':'application/json'}, body:JSON.stringify(sample)}).catch(function () {});
+      }
     }, 0);
   }
 
@@ -133,6 +148,7 @@
           return { name: name, payload: payload };
         });
       })).then(function (parts) {
+        state.transport = 'partitioned';
         var first = parts[0].payload;
         var data = { marketing: null, rebuy: [] };
         parts.forEach(function (part) { data[part.name] = part.payload.data[part.name]; });
@@ -1568,7 +1584,10 @@
     var manifestRequest = fetch(STATUS_ENDPOINT, { cache: 'no-store' });
     try {
       var response = await snapshotRequest;
+      state.snapshotReadyAt = performance.now();
+      state.applyStartedAt = performance.now();
       if (!applySnapshot(response.payload)) throw new Error('Invalid live snapshot.');
+      state.applyFinishedAt = performance.now();
       var initialModule = optionalModuleForPage(location.hash.slice(1));
       if (initialModule) await loadOptionalModule(initialModule);
     } catch (error) {
