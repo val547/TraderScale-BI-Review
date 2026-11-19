@@ -5,7 +5,7 @@ import { extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
 import { pipeline } from "node:stream/promises";
 import { createGzip, gzipSync } from "node:zlib";
-import { affiliateSnapshotDiagnostics, buildSnapshot } from "./lib/bi-snapshot.ts";
+import { affiliateSnapshotDiagnostics, buildSnapshot, snapshotView } from "./lib/bi-snapshot.ts";
 
 const port = Number(process.env.PORT || 3000);
 const serviceAccountJson = process.env.GOOGLE_SERVICE_ACCOUNT_JSON || "";
@@ -32,6 +32,7 @@ type SnapshotCache = {
   value: unknown;
   gzip: Buffer;
   etag: string;
+  variants: Map<string, { value: unknown; gzip: Buffer; etag: string }>;
 };
 let snapshotCache: SnapshotCache | null = null;
 let snapshotRefresh: Promise<SnapshotCache> | null = null;
@@ -79,6 +80,7 @@ function refreshSnapshot() {
       value,
       gzip,
       etag: `"${createHash("sha256").update(gzip).digest("base64url")}"`,
+      variants: new Map(),
     } satisfies SnapshotCache;
     snapshotCache = cache;
     return cache;
@@ -100,7 +102,23 @@ async function currentSnapshot() {
   return refreshSnapshot();
 }
 
-function sendSnapshot(request: IncomingMessage, response: ServerResponse, cache: SnapshotCache) {
+function sendSnapshot(request: IncomingMessage, response: ServerResponse, cache: SnapshotCache, view: string | null = null) {
+  var value = cache.value;
+  var gzip = cache.gzip;
+  var etag = cache.etag;
+  if (view && view !== "full") {
+    var variant = cache.variants.get(view);
+    if (!variant) {
+      value = snapshotView(cache.value, view);
+      gzip = gzipSync(JSON.stringify(value), { level: 6 });
+      etag = `"${createHash("sha256").update(gzip).digest("base64url")}"`;
+      variant = { value, gzip, etag };
+      cache.variants.set(view, variant);
+    }
+    value = variant.value;
+    gzip = variant.gzip;
+    etag = variant.etag;
+  }
   const commonHeaders = {
     ...securityHeaders(),
     "content-type": "application/json; charset=utf-8",
@@ -108,11 +126,11 @@ function sendSnapshot(request: IncomingMessage, response: ServerResponse, cache:
     // browser must revalidate its ETag so a deployment cannot keep an older
     // snapshot schema or attribution mapping for another 24 hours.
     "cache-control": "private, max-age=0, must-revalidate, stale-if-error=3600",
-    etag: cache.etag,
+    etag,
     vary: "accept-encoding",
     "x-snapshot-age": String(Math.max(0, Math.floor((Date.now() - cache.generatedAt) / 1000))),
   };
-  if (request.headers["if-none-match"] === cache.etag) {
+  if (request.headers["if-none-match"] === etag) {
     response.writeHead(304, commonHeaders);
     response.end();
     return;
@@ -121,12 +139,12 @@ function sendSnapshot(request: IncomingMessage, response: ServerResponse, cache:
     response.writeHead(200, {
       ...commonHeaders,
       "content-encoding": "gzip",
-      "content-length": String(cache.gzip.byteLength),
+      "content-length": String(gzip.byteLength),
     });
-    response.end(cache.gzip);
+    response.end(gzip);
     return;
   }
-  const body = JSON.stringify(cache.value);
+  const body = JSON.stringify(value);
   response.writeHead(200, { ...commonHeaders, "content-length": String(Buffer.byteLength(body)) });
   response.end(body);
 }
@@ -308,7 +326,7 @@ const server = createServer(async (request, response) => {
       } else if (url.searchParams.get("view") === "affiliate-diagnostics") {
         send(response, 200, JSON.stringify(affiliateSnapshotDiagnostics(cache.value)), "application/json; charset=utf-8");
       } else {
-        sendSnapshot(request, response, cache);
+        sendSnapshot(request, response, cache, url.searchParams.get("view"));
       }
     } catch (error) {
       const detail = error instanceof Error ? error.message : "Unknown error";

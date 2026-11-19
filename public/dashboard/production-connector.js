@@ -3,7 +3,11 @@
 
   var STATUS_ENDPOINT = 'data/connection-manifest.json';
   var COMPETITOR_ENDPOINT = 'data/competitor-monitor.json';
-  var SNAPSHOT_ENDPOINT = '/api/bi/snapshot';
+  var SNAPSHOT_ENDPOINT = '/api/bi/snapshot?view=core';
+  var OPTIONAL_ENDPOINTS = {
+    marketing: '/api/bi/snapshot?view=marketing',
+    rebuy: '/api/bi/snapshot?view=rebuy'
+  };
   var state = {
     mode: 'loading', manifest: null, snapshot: null, error: null,
     dateStart: '', dateEnd: '', dateAllTime: true, datePickerOpen: false, pendingAllTime: true, dateBoundsCache: null
@@ -14,6 +18,40 @@
     'profitable-risk', 'risk-radar', 'payout-exposure', 'payout-consistency', 'reports', 'settings'
   ]);
   var competitorRequest = null;
+  var optionalRequests = Object.create(null);
+  var optionalLoaded = Object.create(null);
+
+  function optionalModuleForPage(page) {
+    if (page === 'marketing') return 'marketing';
+    if (page === 'rebuy' || page === 'journey') return 'rebuy';
+    return '';
+  }
+
+  function loadOptionalModule(module) {
+    if (!module || optionalLoaded[module]) return Promise.resolve(true);
+    if (optionalRequests[module]) return optionalRequests[module];
+    optionalRequests[module] = fetch(OPTIONAL_ENDPOINTS[module], { cache: 'no-cache', credentials: 'same-origin' })
+      .then(function (response) {
+        if (!response.ok) throw new Error('Optional live dataset request failed.');
+        return response.json();
+      })
+      .then(function (payload) {
+        if (!validSnapshot(payload) || !state.snapshot || !window.BIData) throw new Error('Invalid optional live dataset.');
+        if (module === 'marketing') {
+          state.snapshot.data.marketing = payload.data.marketing || null;
+          window.BIData.productionMarketing = state.snapshot.data.marketing;
+        } else if (module === 'rebuy') {
+          state.snapshot.data.rebuy = Array.isArray(payload.data.rebuy) ? payload.data.rebuy : [];
+          window.BIData.productionRebuy = state.snapshot.data.rebuy;
+        }
+        optionalLoaded[module] = true;
+        installProductionSources();
+        notifyProductionReady();
+        return true;
+      })
+      .finally(function () { delete optionalRequests[module]; });
+    return optionalRequests[module];
+  }
 
   function loadCompetitorData() {
     if (window.BICompetitorMonitorData) return Promise.resolve(window.BICompetitorMonitorData);
@@ -1502,6 +1540,8 @@
     try {
       var response = await snapshotRequest;
       if (!applySnapshot(response.payload)) throw new Error('Invalid live snapshot.');
+      var initialModule = optionalModuleForPage(location.hash.slice(1));
+      if (initialModule) await loadOptionalModule(initialModule);
     } catch (error) {
       state.error = error;
       state.mode = 'error';
@@ -1528,6 +1568,19 @@
   }
 
   window.BIProductionConnector = { state: state, applySnapshot: applySnapshot, start: start, inDateRange: inDateRange, dateLabel: dateLabel, dateRange: dateRange, refreshPresentation: refreshPresentation, renderOwnerOverview: ownerOverviewPage };
+  document.addEventListener('click', function (event) {
+    var pageLink = event.target.closest('[data-page]');
+    if (!pageLink) return;
+    var targetPage = pageLink.getAttribute('data-page');
+    var module = optionalModuleForPage(targetPage);
+    if (!module || optionalLoaded[module]) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    loadOptionalModule(module).catch(function () { return false; }).finally(function () {
+      if (location.hash.slice(1) === targetPage) notifyProductionReady();
+      else location.hash = targetPage;
+    });
+  }, true);
   document.addEventListener('click', function (event) {
     var pageLink = event.target.closest('[data-page]');
     if (pageLink) {

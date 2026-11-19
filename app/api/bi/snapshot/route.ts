@@ -1,6 +1,6 @@
 import { env } from "cloudflare:workers";
 import { headers } from "next/headers";
-import { affiliateSnapshotDiagnostics, buildSnapshot } from "../../../../lib/bi-snapshot";
+import { affiliateSnapshotDiagnostics, buildSnapshot, snapshotView } from "../../../../lib/bi-snapshot";
 
 export const dynamic = "force-dynamic";
 
@@ -33,7 +33,7 @@ export async function GET(request: Request) {
       return json({ schemaVersion: value.schemaVersion, mode: value.mode, asOf: value.asOf, currency: value.currency,
         quality: value.quality, revision: cachedSnapshot.revision, generatedAt: new Date(cachedSnapshot.generatedAt).toISOString(), refreshCadence: "daily" });
     }
-    return json(view === "affiliate-diagnostics" ? affiliateSnapshotDiagnostics(cachedSnapshot.value) : cachedSnapshot.value);
+    return json(view === "affiliate-diagnostics" ? affiliateSnapshotDiagnostics(cachedSnapshot.value) : snapshotView(cachedSnapshot.value, view));
   } catch (error) {
     const detail = error instanceof Error ? error.message : "Unknown error";
     console.error("BI snapshot failed", detail);

@@ -1088,6 +1088,28 @@ export async function buildSnapshot(serviceAccountJson: string) {
   };
 }
 
+export function snapshotView(snapshot: unknown, view: string | null) {
+  if (!view || view === "full") return snapshot;
+  const payload = snapshot as {
+    schemaVersion?: number; mode?: string; asOf?: string; currency?: string; quality?: unknown;
+    data?: Record<string, unknown>;
+  };
+  const data = payload.data ?? {};
+  const base = {
+    schemaVersion: payload.schemaVersion,
+    mode: payload.mode,
+    asOf: payload.asOf,
+    currency: payload.currency,
+    quality: payload.quality,
+  };
+  if (view === "core") {
+    return { ...base, data: { ...data, marketing: null, rebuy: [] } };
+  }
+  if (view === "marketing") return { ...base, data: { marketing: data.marketing ?? null } };
+  if (view === "rebuy") return { ...base, data: { rebuy: data.rebuy ?? [] } };
+  return snapshot;
+}
+
 export function affiliateSnapshotDiagnostics(snapshot: unknown) {
   const payload = snapshot as {
     quality?: unknown;
