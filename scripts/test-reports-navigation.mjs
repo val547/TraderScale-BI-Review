@@ -23,6 +23,12 @@ assert.match(dashboard, /completed=rows\.filter\(row=>row\.rebuySeconds!=null\)/
   'Average rebuy time must include only completed breach-to-rebuy cycles.');
 assert.match(dashboard, /values=completed\.map\(row=>row\.rebuyDays\),avg=values\.length\?values\.reduce\(\(a,b\)=>a\+b,0\)\/values\.length:null,med=median\(values\)/,
   'Average and median rebuy time must use exact elapsed days from completed cycles, never open breaches or zero placeholders.');
+assert.match(dashboard, /history = \{ purchases: livePurchases, events: events, rows: candidates, accounts: liveAccounts, asOf: asOf \}/,
+  'Live rebuy history must retain historical breaches until the reporting cohort is selected.');
+assert.match(dashboard, /var matching = h\.rows\.filter[\s\S]{0,900}matching\.forEach\(function \(row\) \{ if \(!latest\[row\.customerId\]/,
+  'The reporting period and dimensions must be applied before selecting one latest breach per customer.');
+assert.doesNotMatch(dashboard, /Select the latest breach across the complete customer portfolio BEFORE applying cohort filters/,
+  'A later breach outside the reporting period must not erase a valid historical cohort record.');
 
 const allowedPagesMatch = dashboard.match(/const allowedPages=\[([^\]]+)\]/);
 assert.ok(allowedPagesMatch, 'The application page allow-list must exist.');

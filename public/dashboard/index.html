@@ -4115,12 +4115,14 @@ if (location.protocol === 'file:') document.documentElement.classList.remove('pr
           sizeChange: rebuy ? rebuy.accountSize > breachedAccount.accountSize ? 'Higher' : rebuy.accountSize < breachedAccount.accountSize ? 'Lower' : 'Same' : 'Not yet',
           programmeChanged: !!(rebuy && rebuy.programme !== breachedAccount.programme), excludedOrders: [], priorBreaches: 1, synthetic: false });
       });
-      var latest = Object.create(null);
-      candidates.forEach(function (row) { if (!latest[row.customerId] || row.breach.breachedAt > latest[row.customerId].breach.breachedAt) latest[row.customerId] = row; });
-      var rows = Object.keys(latest).map(function (key) {
-        var row = latest[key]; row.priorBreaches = events.filter(function (event) { return event.customerId === key; }).length; return row;
-      });
-      history = { purchases: livePurchases, events: events, rows: rows, accounts: liveAccounts, asOf: asOf };
+      var breachCounts = Object.create(null);
+      events.forEach(function (event) { breachCounts[event.customerId] = (breachCounts[event.customerId] || 0) + 1; });
+      candidates.forEach(function (row) { row.priorBreaches = breachCounts[row.customerId] || 1; });
+      // Retain every verified breach here. The report chooses one latest breach
+      // per customer only after applying the selected cohort and dimensions.
+      // Otherwise a later breach outside the reporting period incorrectly
+      // removes that customer's valid historical breach from the report.
+      history = { purchases: livePurchases, events: events, rows: candidates, accounts: liveAccounts, asOf: asOf };
       return history;
     }
     if (history && historySource === data) return history;
@@ -4171,11 +4173,15 @@ if (location.protocol === 'file:') document.documentElement.classList.remove('pr
   function emptyValue(ui, value, suffix) { return value == null ? '—' : ui.percent(value) + (suffix || ''); }
   function getReport(ctx) {
     var h = buildHistory(ctx.data), f = ctx.filters || {}, local = ctx.local || {}, dates = range(f.period);
-    // Select the latest breach across the complete customer portfolio BEFORE applying cohort filters.
-    var rows = h.rows.filter(function (r) {
+    var matching = h.rows.filter(function (r) {
       var a = r.breachedAccount, day = dateKey(r.breach.breachedAt);
       return day >= dates[0] && day <= dates[1] && (!f.programme || f.programme === 'all' || a.programme === f.programme) && (!f.size || f.size === 'all' || a.accountSize === Number(f.size)) && (!f.country || f.country === 'all' || a.country === f.country) && (!f.channel || f.channel === 'all' || a.channel === f.channel);
     });
+    // The reporting period defines the breach cohort. A customer contributes
+    // once, using their latest verified breach inside that selected cohort.
+    var latest = Object.create(null);
+    matching.forEach(function (row) { if (!latest[row.customerId] || row.breach.breachedAt > latest[row.customerId].breach.breachedAt) latest[row.customerId] = row; });
+    var rows = Object.keys(latest).map(function (key) { return latest[key]; });
     var rebought = rows.filter(function (r) { return !!r.rebuy; }), waiting = rows.filter(function (r) { return !r.rebuy; });
     var ordered = rebought.map(function (r) { return r.lagDays; }).sort(function (a, b) { return a - b; });
     var mean = ordered.length ? ordered.reduce(function (total, days) { return total + days; }, 0) / ordered.length : null;
