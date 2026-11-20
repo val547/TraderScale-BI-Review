@@ -25,6 +25,38 @@
   var competitorRequest = null;
   var optionalRequests = Object.create(null);
   var optionalLoaded = Object.create(null);
+  var optionalLoaderDepth = 0;
+
+  function showOptionalLoader(page) {
+    optionalLoaderDepth += 1;
+    var boot = document.getElementById('production-boot-screen');
+    var app = document.getElementById('app');
+    if (boot) {
+      var title = boot.querySelector('strong');
+      var copy = boot.querySelector('span');
+      if (title) title.textContent = page === 'rebuy' ? 'Loading Average rebuy time' : page === 'journey' ? 'Loading Customer journey' : 'Loading live report data';
+      if (copy) copy.textContent = page === 'rebuy' ? 'Loading breach and qualifying repurchase records.' : page === 'journey' ? 'Loading customer and repurchase records.' : 'Preparing the selected live report.';
+      boot.hidden = false;
+    }
+    if (app) app.setAttribute('aria-busy', 'true');
+    document.documentElement.classList.add('production-booting');
+  }
+
+  function hideOptionalLoader() {
+    optionalLoaderDepth = Math.max(0, optionalLoaderDepth - 1);
+    if (optionalLoaderDepth) return;
+    var boot = document.getElementById('production-boot-screen');
+    var app = document.getElementById('app');
+    document.documentElement.classList.remove('production-booting');
+    if (app) app.removeAttribute('aria-busy');
+    if (boot) {
+      var title = boot.querySelector('strong');
+      var copy = boot.querySelector('span');
+      if (title) title.textContent = 'Loading live warehouse data';
+      if (copy) copy.textContent = 'Preparing the selected workspace and filters.';
+      boot.hidden = true;
+    }
+  }
 
   function optionalModuleForPage(page) {
     if (page === 'marketing') return 'marketing';
@@ -1631,9 +1663,18 @@
     if (!module || optionalLoaded[module]) return;
     event.preventDefault();
     event.stopImmediatePropagation();
-    loadOptionalModule(module).catch(function () { return false; }).finally(function () {
-      if (location.hash.slice(1) === targetPage) notifyProductionReady();
-      else location.hash = targetPage;
+    showOptionalLoader(targetPage);
+    loadOptionalModule(module).catch(function () {
+      // Optional live-data failures must open the supplied report with an empty
+      // live state. Never expose the prototype's embedded demonstration rows.
+      if (module === 'rebuy' && window.BIData) window.BIData.productionRebuy = [];
+      return false;
+    }).finally(function () {
+      if (location.hash.slice(1) !== targetPage) location.hash = targetPage;
+      else notifyProductionReady();
+      requestAnimationFrame(function () {
+        requestAnimationFrame(hideOptionalLoader);
+      });
     });
   }, true);
   document.addEventListener('click', function (event) {

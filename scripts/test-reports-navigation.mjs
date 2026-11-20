@@ -19,6 +19,11 @@ assert.match(source, /if \(action === 'reports-open'\)[\s\S]*return \{ navigate:
 assert.doesNotMatch(source, /enabled=source\.state==='live'/,
   'Source readiness must not disable a supplied report screen.');
 
+assert.match(dashboard, /completed=rows\.filter\(row=>row\.rebuySeconds!=null\)/,
+  'Average rebuy time must include only completed breach-to-rebuy cycles.');
+assert.match(dashboard, /values=completed\.map\(row=>row\.rebuyDays\),avg=values\.length\?values\.reduce\(\(a,b\)=>a\+b,0\)\/values\.length:null,med=median\(values\)/,
+  'Average and median rebuy time must use exact elapsed days from completed cycles, never open breaches or zero placeholders.');
+
 const allowedPagesMatch = dashboard.match(/const allowedPages=\[([^\]]+)\]/);
 assert.ok(allowedPagesMatch, 'The application page allow-list must exist.');
 const allowedPages = new Set([...allowedPagesMatch[1].matchAll(/'([^']+)'/g)].map(([, page]) => page));

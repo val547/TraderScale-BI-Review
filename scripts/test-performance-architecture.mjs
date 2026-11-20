@@ -38,6 +38,12 @@ assert.match(dashboard, /recordRenderTiming\(\{page,totalMs:elapsed/,
   'Every completed page render must expose compute, DOM and presentation phases.');
 assert.match(connector, /OPTIONAL_ENDPOINTS = \{[\s\S]*marketing:[\s\S]*rebuy:/,
   'Marketing and rebuy datasets must load independently when their reports are opened.');
+assert.match(connector, /function showOptionalLoader\(page\)/,
+  'Lazy report navigation must expose a visible loader instead of appearing unresponsive.');
+assert.match(connector, /showOptionalLoader\(targetPage\);[\s\S]{0,900}requestAnimationFrame\(hideOptionalLoader\)/,
+  'The lazy report loader must remain visible until the requested report has rendered.');
+assert.match(connector, /window\.BIData\.productionRebuy = \[\]/,
+  'A failed optional rebuy request must never reveal embedded demonstration rows.');
 assert.match(snapshot, /export function snapshotView/,
   'The server must expose allow-listed snapshot projections.');
 assert.match(snapshot, /marketing: null, rebuy: \[\]/,
