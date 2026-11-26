@@ -88,4 +88,25 @@ assert.match(moduleSource, /The payout date does not decide cohort membership\./
 assert.doesNotMatch(cohortSource, /FictionalDemo/,
   'Live payout cohort exports must never be labelled as fictional or demo data.');
 
+const testWindow = {};
+new Function('window', moduleSource.replace('window.BIPayoutHistory={', 'window.testTrend=trend; window.BIPayoutHistory={'))(testWindow);
+const trend = testWindow.testTrend;
+const ui = { escape: String, number: String, money: value => '$' + value, icon: () => '' };
+const points = [
+  { label: 'Oct 1', from: '2026-10-01', to: '2026-10-01', amount: 25.5, payments: 1, revenue: 100, revenueKnown: true, ratio: { value: 25.5 } },
+  { label: 'Oct 2', from: '2026-10-02', to: '2026-10-02', amount: 0, payments: 0, revenue: null, revenueKnown: false, ratio: { value: null } },
+];
+const report = {
+  series: { points, monthly: false }, state: { trendMetric: 'comparison' },
+  windows: { currentLabel: 'October', comparable: false }, totals: { amount: 25.5, payments: 1, clients: 1 },
+  revenue: { current: { known: false } }, scopeCoverage: {}, comparison: {},
+};
+const chart = trend({ ui }, report);
+assert.match(chart, /tabindex="0".*Use the arrow keys/);
+assert.match(chart, /data-amount="\$25\.50" data-payments="1" data-revenue="\$100\.00" data-ratio="25\.50%"/);
+assert.match(chart, /data-revenue="Unavailable" data-ratio="Unavailable"/);
+assert.doesNotMatch(trend({ ui }, { ...report, state: { trendMetric: 'count' } }), /data-field="revenue"/);
+assert.doesNotMatch(trend({ ui }, { ...report, series: { points: [], monthly: false } }), /tabindex="0"|data-ph-trend-point/);
+assert.match(trend({ ui }, { ...report, series: { points, monthly: true } }), /data-ph-trend-point="0"/);
+
 console.log('payout reporting period: acquisition-cohort filtering passed');

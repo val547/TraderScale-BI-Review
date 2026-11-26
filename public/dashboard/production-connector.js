@@ -324,6 +324,7 @@
       }
       return Object.assign(row, {
         id: row.id, date: row.date, customerId: row.customerId,
+        canonicalCouponCodes: payload.quality && payload.quality.checkoutCouponsReady ? row.couponCodes : undefined,
         customerName: profile.name || (account && account.customerName) || 'No live data',
         programme: row.programme && row.programme !== 'Unknown' ? row.programme : account ? account.programme : 'Unknown',
         programmeFamily: row.programmeFamily || (account && account.programmeFamily) || 'Unknown',
@@ -831,6 +832,7 @@
       });
     }));
     window.BIData.affiliatePnl = adapted.affiliatePnl.slice();
+    window.BIData.productionCheckoutOrders = payload.quality?.checkoutOrdersReady === false ? [] : data.orders || [];
     window.BIData.productionProfitability = Array.isArray(data.profitability) ? data.profitability.slice() : [];
     window.BIData.productionMarketing = data.marketing && typeof data.marketing === 'object' ? data.marketing : null;
     window.BIData.productionWithdrawable = data.withdrawable && typeof data.withdrawable === 'object' ? data.withdrawable : null;

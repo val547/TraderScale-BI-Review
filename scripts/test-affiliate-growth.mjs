@@ -54,4 +54,24 @@ const scaleOnly = testWindow.BIAffiliateGrowth.getReport(context);
 assert.equal(scaleOnly.rows.length, 0, "the signal dropdown may filter the detailed table");
 assert.equal(scaleOnly.chartRows.length, 10, "the signal dropdown must not filter the P&L comparison");
 
+const report = testWindow.BIAffiliateGrowth;
+context.local.affgrowthSignal = "all";
+report.onAction("affgrowth-sort", { dataset: { value: "name" } }, context);
+assert.equal(report.getReport(context).rows[0].name, "Affiliate 1");
+report.onAction("affgrowth-sort", { dataset: { value: "name" } }, context);
+assert.equal(report.getReport(context).rows[0].name, "Affiliate 9");
+
+function filterColumn(key, value) {
+  report.onChange({ getAttribute: () => "column-" + key, value }, context);
+}
+filterColumn("profitMin", "80");
+filterColumn("marginMax", "84");
+assert.equal(report.getReport(context).rows.length, 0, "margin and profit must filter independently");
+filterColumn("marginMax", "85");
+filterColumn("name", "Affiliate 79");
+assert.deepEqual(report.exportRows(context).map(row => row.Group), ["Affiliate 79"], "CSV must follow the table filters");
+assert.equal(report.getReport(context).chartRows.length, 10, "column filters must leave the comparison chart independent");
+report.onAction("affgrowth-clear-columns", { dataset: {} }, context);
+assert.equal(report.getReport(context).rows.length, 79);
+
 console.log("affiliate growth regression: 79 partners, commission reconciliation and independent chart filter passed");

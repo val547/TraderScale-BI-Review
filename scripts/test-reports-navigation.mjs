@@ -38,3 +38,28 @@ for (const report of reportRows) {
 }
 
 console.log(`reports navigation: ${reportRows.length} supplied report cards are openable`);
+
+const pipelineSource = dashboard.match(/<script data-source="pipeline\.js">([\s\S]*?)<\/script>/)?.[1];
+assert.ok(pipelineSource, 'Payout readiness must be available to Owner overview.');
+const testWindow = {};
+new Function('window', pipelineSource)(testWindow);
+const funded = {
+  id: 'funded-known', status: 'Active', stage: 'Funded', programme: 'Speedy',
+  payoutAccrued: 100, profitDays: 3, realizedPnl: 100, consistency: 10,
+  initialBalance: 50000, rewardShare: 0.8, openedAt: '2026-11-01',
+};
+const { funded: accounts, readyCount, blockedCount } = testWindow.BIPipeline.getSummary({
+  data: { asOf: '2026-11-26', accountRules: {}, accounts: [
+    funded,
+    { ...funded, id: 'funded-missing', openedAt: undefined },
+    { ...funded, id: 'funded-invalid', openedAt: '2026-11-31' },
+  ] },
+  local: {}, filters: {},
+});
+assert.equal(readyCount, 1);
+assert.equal(blockedCount, 2);
+for (const row of accounts.slice(1)) {
+  assert.equal(row.earliestDate, null);
+  assert.equal(row.waitDaysRemaining, null);
+  assert.ok(row.blockers.includes('Opening date unavailable'));
+}

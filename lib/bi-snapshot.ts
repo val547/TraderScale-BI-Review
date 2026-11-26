@@ -388,6 +388,75 @@ LEFT JOIN primary_product AS p USING (store_id, order_id)
 ORDER BY order_reporting_date DESC, order_id
 `;
 
+const ORDERS_WITH_CHECKOUT_SQL = `
+WITH primary_product AS (
+  SELECT store_id, order_id,
+    ARRAY_AGG(product_name IGNORE NULLS ORDER BY ABS(COALESCE(total_usd, 0)) DESC, line_id LIMIT 1)[SAFE_OFFSET(0)] AS product_name
+  FROM \`trader-scale-486213.trader_scale.fct_commerce_order_lines\`
+  GROUP BY store_id, order_id
+), eligible AS (
+  SELECT store_id, order_id, order_number, order_reporting_date,
+    CAST(order_created_at AS STRING) AS purchased_at, order_total_usd,
+    line_subtotal_source * usd_exchange_rate AS checkout_subtotal_usd,
+    discount_source * usd_exchange_rate AS checkout_discount_usd,
+    billing_country, gross_revenue_usd, refunded_usd, net_revenue_usd,
+    status, is_revenue_eligible, is_net_revenue_eligible, status_policy_version
+  FROM \`trader-scale-486213.trader_scale.fct_commerce_orders\`
+), prop_orders AS (
+  SELECT DISTINCT store_id, order_id
+  FROM \`trader-scale-486213.trader_scale.bridge_commerce_prop_orders\`
+  WHERE account_id IS NOT NULL AND account_id != ''
+), identified AS (
+  SELECT o.*,
+    COALESCE(NULLIF(b.commerce_customer_key, ''), CONCAT('order:', o.store_id, ':', o.order_id)) AS customer_key
+  FROM eligible AS o
+  LEFT JOIN \`trader-scale-486213.trader_scale.bridge_commerce_customer_orders\` AS b
+    USING (store_id, order_id)
+), first_orders AS (
+  SELECT *, MIN(order_reporting_date) OVER (PARTITION BY customer_key) AS first_order_date
+  FROM identified
+)
+SELECT store_id, order_id, order_number, order_reporting_date, customer_key,
+  purchased_at, order_total_usd, checkout_subtotal_usd, checkout_discount_usd,
+  is_net_revenue_eligible, prop.order_id IS NOT NULL AS prop_purchase,
+  billing_country, status, is_revenue_eligible, gross_revenue_usd, refunded_usd, net_revenue_usd,
+  p.product_name,
+  order_reporting_date = first_order_date AS is_new_customer,
+  status_policy_version
+FROM first_orders
+LEFT JOIN primary_product AS p USING (store_id, order_id)
+LEFT JOIN prop_orders AS prop USING (store_id, order_id)
+ORDER BY order_reporting_date DESC, order_id
+`;
+
+const ORDER_COUPONS_SQL = `
+  SELECT store_id, order_id, TO_JSON_STRING(ARRAY_AGG(DISTINCT coupon_code IGNORE NULLS ORDER BY coupon_code)) AS coupon_codes
+  FROM \`trader-scale-486213.trader_scale.fct_commerce_order_coupons\`
+  WHERE coupon_code IS NOT NULL AND TRIM(coupon_code) != ''
+  GROUP BY store_id, order_id
+`;
+
+const CHALLENGE_ATTEMPTS_SQL = `
+WITH attempt_links AS (
+  SELECT DISTINCT b.store_id, b.order_id, a.attempt_id, a.plan_steps,
+    CAST(a.step1_account_nr AS STRING) AS start_login,
+    CAST(a.step2_account_nr AS STRING) AS second_login,
+    CAST(a.step3_account_nr AS STRING) AS third_login,
+    CAST(a.step2_started_at AS STRING) AS second_at,
+    CAST(a.reached_funded_date AS STRING) AS funded_on,
+    CAST((SELECT MIN(stamp) FROM UNNEST([a.step1_breached_at, a.step2_breached_at, a.step3_breached_at]) AS stamp) AS STRING) AS breached_at
+  FROM \`trader-scale-486213.trader_scale.attempt_details_outcomes\` AS a
+  JOIN \`trader-scale-486213.trader_scale.bridge_commerce_prop_orders\` AS b
+    ON a.customer_id = b.customer_id AND CAST(a.step1_account_nr AS STRING) = b.account_nr
+  WHERE a.attempt_id IS NOT NULL
+)
+  SELECT store_id, order_id, TO_JSON_STRING(STRUCT(attempt_id, plan_steps, start_login, second_login,
+    third_login, second_at, funded_on, breached_at)) AS attempt_evidence
+  FROM attempt_links
+  QUALIFY COUNT(*) OVER (PARTITION BY store_id, order_id) = 1
+    AND COUNT(*) OVER (PARTITION BY attempt_id) = 1
+`;
+
 const PROFITABILITY_SQL = `
 SELECT attempt_started_at_date,
   COALESCE(plan, 'Unknown') AS plan,
@@ -659,6 +728,13 @@ SELECT 'toxic', breach_id,
 FROM \`trader-scale-486213.trader_scale.rule15_toxic_daily\`
 `;
 
+async function canonicalOrders(credential: ServiceAccount, token: string) {
+  const checkout = await optionalQuery(credential, token, "Canonical checkout fields", ORDERS_WITH_CHECKOUT_SQL);
+  if (!checkout.error) return { ...checkout, checkoutError: "" };
+  const canonical = await optionalQuery(credential, token, "Canonical orders", ORDERS_SQL);
+  return { ...canonical, checkoutError: checkout.error };
+}
+
 export async function buildSnapshot(serviceAccountJson: string) {
   if (!serviceAccountJson) throw new Error("BigQuery secret is not configured.");
   const credential = JSON.parse(serviceAccountJson) as ServiceAccount;
@@ -666,10 +742,10 @@ export async function buildSnapshot(serviceAccountJson: string) {
   const token = await accessToken(credential);
   const [accountRows, payoutRows, orderResult, profitabilityResult, affiliatePnlResult, affiliatePayoutAllocationResult, customerResult, tradeResult,
     marketingChannelResult, marketingCampaignResult, marketingAttributionResult, marketingLtvResult,
-    withdrawableResult, withdrawableRunResult, riskFindingsResult, rebuyResult] = await Promise.all([
+    withdrawableResult, withdrawableRunResult, riskFindingsResult, rebuyResult, couponResult, challengeResult] = await Promise.all([
     query(credential, token, ACCOUNTS_SQL),
     query(credential, token, PAYOUTS_SQL),
-    optionalQuery(credential, token, "Canonical orders", ORDERS_SQL),
+    canonicalOrders(credential, token),
     optionalQuery(credential, token, "Attempt profitability", PROFITABILITY_SQL),
     optionalQuery(credential, token, "Released affiliate P&L", AFFILIATE_PNL_SQL),
     optionalQuery(credential, token, "Released affiliate payout allocation", AFFILIATE_PAYOUT_ALLOCATION_SQL),
@@ -683,6 +759,8 @@ export async function buildSnapshot(serviceAccountJson: string) {
     optionalQuery(credential, token, "Withdrawable profit run", WITHDRAWABLE_RUN_SQL),
     optionalQuery(credential, token, "Risk findings", RISK_FINDINGS_SQL),
     optionalQuery(credential, token, "Breach to rebuy", REBUY_SQL),
+    optionalQuery(credential, token, "Canonical checkout coupons", ORDER_COUPONS_SQL),
+    optionalQuery(credential, token, "Challenge attempt progression", CHALLENGE_ATTEMPTS_SQL),
   ]);
   const orderRows = orderResult.rows;
   const profitabilityRows = profitabilityResult.rows;
@@ -691,9 +769,9 @@ export async function buildSnapshot(serviceAccountJson: string) {
   const customerRows = customerResult.rows;
   const tradeRows = tradeResult.rows;
   const tradeByAccount = new Map(tradeRows.map((row) => [text(row.account_id), row]));
-  const queryErrors = [orderResult.error, profitabilityResult.error, affiliatePnlResult.error, affiliatePayoutAllocationResult.error, customerResult.error, tradeResult.error,
+  const queryErrors = [orderResult.error, orderResult.checkoutError, profitabilityResult.error, affiliatePnlResult.error, affiliatePayoutAllocationResult.error, customerResult.error, tradeResult.error,
     marketingChannelResult.error, marketingCampaignResult.error, marketingAttributionResult.error, marketingLtvResult.error,
-    withdrawableResult.error, withdrawableRunResult.error, riskFindingsResult.error, rebuyResult.error].filter(Boolean);
+    withdrawableResult.error, withdrawableRunResult.error, riskFindingsResult.error, rebuyResult.error, couponResult.error, challengeResult.error].filter(Boolean);
 
   const accounts = accountRows.map((row) => {
     const trade = tradeByAccount.get(text(row.account_id));
@@ -772,9 +850,17 @@ export async function buildSnapshot(serviceAccountJson: string) {
     };
   });
 
+  const couponsByOrder = new Map(couponResult.rows.map((row) => [JSON.stringify([row.store_id, row.order_id]), text(row.coupon_codes)]));
+  const attemptsByOrder = new Map(challengeResult.rows.map((row) => [JSON.stringify([row.store_id, row.order_id]), text(row.attempt_evidence)]));
   const orders = orderRows.map((row) => ({
     id: `${text(row.store_id)}:${text(row.order_id)}`,
     orderNumber: text(row.order_number), date: date(row.order_reporting_date),
+    purchasedAt: text(row.purchased_at), checkoutTotal: optionalNumber(row.order_total_usd),
+    checkoutSubtotal: optionalNumber(row.checkout_subtotal_usd), checkoutDiscount: optionalNumber(row.checkout_discount_usd),
+    netRevenueEligible: row.is_net_revenue_eligible === true || text(row.is_net_revenue_eligible) === "true",
+    propPurchase: row.prop_purchase === true || text(row.prop_purchase) === "true",
+    couponCodes: JSON.parse(couponsByOrder.get(JSON.stringify([row.store_id, row.order_id])) || "[]") as string[],
+    attemptEvidence: JSON.parse(attemptsByOrder.get(JSON.stringify([row.store_id, row.order_id])) || "null"),
     customerId: text(row.customer_key), country: text(row.billing_country, "Unknown"),
     status: text(row.status), revenueEligible: row.is_revenue_eligible === true || text(row.is_revenue_eligible) === "true",
     grossRevenue: number(row.gross_revenue_usd), refunded: number(row.refunded_usd),
@@ -1072,6 +1158,9 @@ export async function buildSnapshot(serviceAccountJson: string) {
       riskFindingsReady: !riskFindingsResult.error,
       journeyReady: !customerResult.error,
       rebuyReady: !rebuyResult.error,
+      checkoutOrdersReady: !orderResult.checkoutError,
+      checkoutCouponsReady: !couponResult.error && !orderResult.checkoutError,
+      challengeAttemptsReady: !challengeResult.error && !orderResult.checkoutError,
       partial: queryErrors.length > 0,
       warnings: [
         "Live canonical orders, attempt profitability, affiliates, customers, accounts, payouts, account trades, ThoughtMetric paid marketing, withdrawable profit, customer journey, breach-to-rebuy and nine current risk detector snapshots are enabled.",
