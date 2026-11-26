@@ -25,6 +25,7 @@
   var competitorRequest = null;
   var optionalRequests = Object.create(null);
   var optionalLoaded = Object.create(null);
+  var optionalErrors = Object.create(null);
   var optionalLoaderDepth = 0;
 
   function showOptionalLoader(page) {
@@ -67,6 +68,7 @@
   function loadOptionalModule(module) {
     if (!module || optionalLoaded[module]) return Promise.resolve(true);
     if (optionalRequests[module]) return optionalRequests[module];
+    delete optionalErrors[module];
     optionalRequests[module] = fetch(OPTIONAL_ENDPOINTS[module], { cache: 'no-cache', credentials: 'same-origin' })
       .then(function (response) {
         if (!response.ok) throw new Error('Optional live dataset request failed.');
@@ -74,6 +76,7 @@
       })
       .then(function (payload) {
         if (!validSnapshot(payload) || !state.snapshot || !window.BIData) throw new Error('Invalid optional live dataset.');
+        if (payload.quality?.[module + 'Ready'] === false) throw new Error('Warehouse report source unavailable.');
         if (module === 'marketing') {
           state.snapshot.data.marketing = payload.data.marketing || null;
           window.BIData.productionMarketing = state.snapshot.data.marketing;
@@ -85,6 +88,12 @@
         installProductionSources();
         notifyProductionReady();
         return true;
+      })
+      .catch(function (error) {
+        optionalErrors[module] = error;
+        if (module === 'rebuy' && window.BIData) window.BIData.productionRebuy = [];
+        notifyProductionReady();
+        return false;
       })
       .finally(function () { delete optionalRequests[module]; });
     return optionalRequests[module];
@@ -1355,7 +1364,7 @@
     var dateControl = document.querySelector('.date-control');
     if (!dateControl || state.mode !== 'production') return;
     var legacyFilters = document.getElementById('filters-row');
-    if (legacyFilters) legacyFilters.hidden = page === 'marketing' || page === 'journey';
+    if (legacyFilters && (page === 'marketing' || page === 'journey')) legacyFilters.hidden = true;
     var currentOnlyPages = new Set(['profitable-risk', 'payout-exposure', 'payout-consistency']);
     if (currentOnlyPages.has(page)) {
       dateControl.hidden = false;
@@ -1390,17 +1399,9 @@
       [/demo ledger/gi, 'live ledger'],
       [/fictional purchase ledger/gi, 'live purchase ledger'],
       [/shared fictional payout history/gi, 'live warehouse payout history'],
-      [/paid payouts/gi, 'approved payouts'],
-      [/paid payout/gi, 'approved payout'],
-      [/paid cash/gi, 'approved payout volume'],
-      [/cash paid/gi, 'approved payout volume'],
-      [/settled payments/gi, 'approved payouts'],
-      [/payment settlement dates/gi, 'approval dates'],
-      [/settlement dates/gi, 'approval dates'],
       [/demo record/gi, 'live warehouse record'],
       [/simulated payout history from January 2024/gi, 'live warehouse history where available'],
       [/Simulated device links, beneficiary references and paired trading observations/gi, 'Live source not connected'],
-      [/Dubai time/gi, 'Kyiv time'],
       [/Example follow-up/gi, 'Required follow-up'],
       [/The example coverage includes current links, visible offers, product terms, policies and navigation changes\. This offline copy does not inspect those pages\./gi, 'The daily monitor inspects current public links, visible offers, product terms, prices, policies and navigation changes on the official domain.'],
       [/No live business systems are connected to this prototype\./gi, 'Connected production warehouse sources are listed above.'],
@@ -1418,7 +1419,7 @@
       root.querySelectorAll('[data-action="competitor-monitor-toggle"]').forEach(function (button) { button.remove(); });
       root.querySelectorAll('[data-kind="competitor-monitor"]').forEach(function (button) { button.setAttribute('data-kind', 'competitors'); });
     }
-    [root, document.getElementById('drawer-layer')].filter(Boolean).forEach(function (copyRoot) {
+    [root, document.getElementById('drawer-layer'), document.getElementById('modal-layer')].filter(Boolean).forEach(function (copyRoot) {
       var walker = document.createTreeWalker(copyRoot, NodeFilter.SHOW_TEXT);
       var relevantCopy = /(demo|fiction|sample|paid payout|paid cash|cash paid|settled payment|settlement date|Dubai time|Example follow-up|No live business systems)/i;
       var node;
@@ -1429,8 +1430,6 @@
         if (value !== node.nodeValue) node.nodeValue = value;
       }
     });
-    var changeSummary = root.querySelector('.changes-summary p');
-    if (changeSummary) changeSummary.textContent = 'Use the date filter to choose a period with complete preceding history.';
     var changesEmpty = root.querySelector('.changes-empty');
     if (changesEmpty) {
       var changesCopy = changesEmpty.querySelector('p');
@@ -1656,29 +1655,21 @@
     loadCompetitorWhenNeeded();
   }
 
-  window.BIProductionConnector = { state: state, applySnapshot: applySnapshot, start: start, inDateRange: inDateRange, dateLabel: dateLabel, dateRange: dateRange, refreshPresentation: refreshPresentation, renderOwnerOverview: ownerOverviewPage, recordRenderTiming: recordRenderTiming };
-  document.addEventListener('click', function (event) {
-    var pageLink = event.target.closest('[data-page]');
-    if (!pageLink) return;
-    var targetPage = pageLink.getAttribute('data-page');
+  window.BIProductionConnector = { state: state, applySnapshot: applySnapshot, start: start, inDateRange: inDateRange, dateLabel: dateLabel, dateRange: dateRange, refreshPresentation: refreshPresentation, renderOwnerOverview: ownerOverviewPage, recordRenderTiming: recordRenderTiming, ensureOptionalPage: ensureOptionalPage, optionalStatus: optionalStatus };
+  function optionalStatus(module) {
+    return optionalLoaded[module] ? 'ready' : optionalErrors[module] ? 'error' : 'loading';
+  }
+
+  function ensureOptionalPage(targetPage) {
     var module = optionalModuleForPage(targetPage);
-    if (!module || optionalLoaded[module]) return;
-    event.preventDefault();
-    event.stopImmediatePropagation();
+    if (state.mode !== 'production' || !module || optionalLoaded[module] || optionalRequests[module]) return;
     showOptionalLoader(targetPage);
-    loadOptionalModule(module).catch(function () {
-      // Optional live-data failures must open the supplied report with an empty
-      // live state. Never expose the prototype's embedded demonstration rows.
-      if (module === 'rebuy' && window.BIData) window.BIData.productionRebuy = [];
-      return false;
-    }).finally(function () {
-      if (location.hash.slice(1) !== targetPage) location.hash = targetPage;
-      else notifyProductionReady();
+    loadOptionalModule(module).finally(function () {
       requestAnimationFrame(function () {
         requestAnimationFrame(hideOptionalLoader);
       });
     });
-  }, true);
+  }
   document.addEventListener('click', function (event) {
     var pageLink = event.target.closest('[data-page]');
     if (pageLink) {

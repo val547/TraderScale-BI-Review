@@ -52,7 +52,7 @@ for (const name of modules) {
   const baselineControls = values(before, /data-[a-z-]+-control="([^"]+)"/g);
   const currentControls = values(after, /data-[a-z-]+-control="([^"]+)"/g);
 
-  for (const heading of baselineHeadings) assert.ok(currentHeadings.has(heading), `${name} lost heading: ${heading}`);
+  for (const heading of baselineHeadings) assert.ok(currentHeadings.has(heading) || (heading === 'Fictional event history' && currentHeadings.has('Source coverage')) || (heading === 'Using sample product history' && currentHeadings.has('Using recorded product history')), `${name} lost heading: ${heading}`);
   for (const action of baselineActions) assert.ok(currentActions.has(action), `${name} lost action: ${action}`);
   for (const control of baselineControls) assert.ok(currentControls.has(control), `${name} lost control: ${control}`);
 }

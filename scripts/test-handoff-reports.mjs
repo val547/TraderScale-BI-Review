@@ -73,7 +73,7 @@ assert.equal(affiliate.selected.averageLtv, 20000);
 assert.equal(affiliate.selected.payback, null);
 assert.equal(affiliate.selected.complete, false);
 const affiliateHtml = window.BIAffiliateValue.render(ctx({}));
-assert.match(affiliateHtml, /Recovery rate unavailable · direct costs incomplete/);
+assert.match(affiliateHtml, /Recovery rate unavailable · affiliate commission data incomplete/);
 assert.doesNotMatch(affiliateHtml, /0\.0% recovered their individual cost/);
 assert.match(affiliateHtml, /Acquisition \/ client[\s\S]*Unavailable/);
 assert.match(affiliateHtml, /new-report-table" tabindex="0" role="region"/);
@@ -82,6 +82,28 @@ assert.match(
   /No customers match these record filters/,
   'Customers with unknown costs must not be counted as unrecovered.'
 );
+
+
+const commissionOrders = orders.map(order => ({...order,id:'store:'+order.id}));
+const commissionData = {...data,productionCheckoutOrders:commissionOrders,
+  orders:[{...data.orders[0],id:'store:z-first'}],
+  affiliatePnl:[
+    {storeId:'store',orderId:'z-first',componentType:'commission',amount:12,amountKnown:true},
+    {storeId:'store',orderId:'a-second',componentType:'revenue',allocationBucket:'without_affiliate',amountKnown:true},
+    {storeId:'store',orderId:'z-first',componentType:'payout',amount:5000,amountKnown:true},
+  ],
+};
+const commissioned = window.BIAffiliateValue.getReport({data:commissionData,local:{},ui});
+assert.equal(commissioned.selected.averageAcquisition,1200);
+assert.equal(commissioned.selected.averageContribution,18800);
+assert.equal(commissioned.selected.payback,0);
+assert.equal(commissioned.selected.complete,true);
+const unknown = {...commissionData,productionCheckoutOrders:commissionOrders.slice(),
+  affiliatePnl:commissionData.affiliatePnl.filter(row=>row.componentType!=='revenue')};
+const incompleteCommission = window.BIAffiliateValue.getReport({data:unknown,local:{},ui});
+assert.equal(incompleteCommission.selected.averageAcquisition,1200);
+assert.equal(incompleteCommission.selected.averageContribution,null);
+assert.equal(incompleteCommission.selected.payback,null);
 
 for (const [module, pattern] of [
   [window.BIProductMigration, /class="gr-page pm-page"/],
@@ -113,7 +135,7 @@ if (process.env.TRADERSCALE_HANDOFF_HTML) {
       const values = source => new Set([...source.matchAll(pattern)].map(([, value]) => value.trim()));
       const actual = values(current);
       for (const expected of values(reference)) {
-        if (expected && expected !== 'Fictional data' && expected !== 'Fictional history') {
+        if (expected && !['Fictional data', 'Fictional history', 'Fictional source', 'Fictional event history'].includes(expected)) {
           assert.ok(actual.has(expected), name + ' preserves ' + expected);
         }
       }
