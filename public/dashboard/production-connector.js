@@ -1553,7 +1553,7 @@
       if (workspaceTitle) workspaceTitle.textContent = 'Production workspace';
       if (workspaceHeading) workspaceHeading.textContent = 'Live data only';
       if (workspaceCopy) workspaceCopy.textContent = 'Filters and reports use connected warehouse records. Generated fallback business values are disabled.';
-      if (resetButton) { resetButton.textContent = 'Demo data disabled'; resetButton.disabled = true; }
+      if (resetButton) { resetButton.textContent = 'Warehouse data only'; resetButton.disabled = true; }
     }
   }
 

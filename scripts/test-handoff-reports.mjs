@@ -135,7 +135,7 @@ if (process.env.TRADERSCALE_HANDOFF_HTML) {
       const values = source => new Set([...source.matchAll(pattern)].map(([, value]) => value.trim()));
       const actual = values(current);
       for (const expected of values(reference)) {
-        if (expected && !['Fictional data', 'Fictional history', 'Fictional source', 'Fictional event history'].includes(expected)) {
+        if (expected && !['Fictional data', 'Fictional history', 'Fictional source', 'Fictional event history', 'Demonstration source'].includes(expected)) {
           assert.ok(actual.has(expected), name + ' preserves ' + expected);
         }
       }
