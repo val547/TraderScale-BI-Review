@@ -28,7 +28,7 @@ const orders = [
     attempt_id: 'attempt-1', plan_steps: '1-Step', start_login: '125', funded_on: '2026-07-08', breached_at: '2026-07-22',
   } }),
   checkout('a-second', 'buyer', '2026-07-01T22:00:00Z', { programme: 'Two Step', programmeFamily: 'Two Step', accountSize: 100000 }),
-  checkout('free', 'lead', '2026-07-05T10:00:00Z', { checkoutTotal: 0, checkoutDiscount: 100, netRevenue: 0, couponCodes: ['NW5K'] }),
+  checkout('free', 'lead', '2026-07-05T10:00:00Z', { checkoutTotal: 0, checkoutDiscount: 100, netRevenue: 0, netRevenueEligible: false, couponCodes: ['NW5K'] }),
   checkout('paid', 'lead', '2026-07-06T10:00:00Z', { netRevenue: 75 }),
   checkout('multi', 'ambiguous', '2026-07-07T10:00:00Z', { checkoutTotal: 0, checkoutDiscount: 100, netRevenue: 0, couponCodes: ['TS5K','NW5K'] }),
   checkout('addon', 'buyer', '2026-07-08T10:00:00Z', { propPurchase: false, netRevenue: 20 }),
@@ -72,6 +72,16 @@ const affiliate = window.BIAffiliateValue.getReport(ctx({}));
 assert.equal(affiliate.selected.averageLtv, 20000);
 assert.equal(affiliate.selected.payback, null);
 assert.equal(affiliate.selected.complete, false);
+const affiliateHtml = window.BIAffiliateValue.render(ctx({}));
+assert.match(affiliateHtml, /Recovery rate unavailable · direct costs incomplete/);
+assert.doesNotMatch(affiliateHtml, /0\.0% recovered their individual cost/);
+assert.match(affiliateHtml, /Acquisition \/ client[\s\S]*Unavailable/);
+assert.match(affiliateHtml, /new-report-table" tabindex="0" role="region"/);
+assert.match(
+  window.BIAffiliateValue.render(ctx({ affiliateValueRecordsOpen: true, affiliateValueRecovery: 'unpaid' })),
+  /No customers match these record filters/,
+  'Customers with unknown costs must not be counted as unrecovered.'
+);
 
 for (const [module, pattern] of [
   [window.BIProductMigration, /class="gr-page pm-page"/],
