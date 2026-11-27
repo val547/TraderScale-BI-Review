@@ -11995,7 +11995,7 @@ function chartInspection(points, labels, x, left, right, top, height){
     '</span><span class="sr-only" role="status" aria-atomic="true"></span>';
   return {overlay,tooltip};
 }
-window.BIUI={money,compact,number,percent,icon,escape:esc,metric,chart,chartInspection,chartMoney,empty,badge};
+window.BIUI={money,compact,number,percent,icon,escape:esc,metric,chart,chartInspection,chartMoney,empty,badge,toast};
 function persist(){try{localStorage.setItem(storageKey,JSON.stringify({clientProfitActions:local.clientProfitActions,competitorWatchlist:local.competitorWatchlist,competitorUpdates:local.competitorUpdates,competitorReviews:local.competitorReviews,payoutStatuses:local.payoutStatuses,riskStatuses:local.riskStatuses,notes:local.notes,compact:local.compact,showComparisons:local.showComparisons,flagRules:local.flagRules,ownerReviews:local.ownerReviews,businessUpdates:local.businessUpdates,radarRules:local.radarRules,radarReviews:local.radarReviews,riskRuleSettings:local.riskRuleSettings,riskRuleReviews:local.riskRuleReviews,consistencyRules:local.consistencyRules,retentionSettings:local.retentionSettings,payoutPatternSettings:{minAccounts:local.payoutPatternsMinAccounts,minClients:local.payoutPatternsMinClients,threshold:local.payoutPatternsThreshold}}));}catch(e){}}
 function currentPayouts(){return D.payouts.filter(p=>(filters.programme==='all'||p.programme===filters.programme)&&(filters.country==='all'||p.country===filters.country)&&(filters.channel==='all'||p.channel===filters.channel)&&(filters.size==='all'||String(p.accountSize)===String(filters.size))).map(p=>Object.assign({},p,{status:local.payoutStatuses[p.id]||p.status}));}
 function approved(){return currentPayouts().filter(p=>p.status==='Approved');}
@@ -12323,6 +12323,7 @@ if(window.BIProductionConnector&&window.BIProductionConnector.state&&window.BIPr
     return screenshotLibrary;
   }
   launcher.addEventListener('click', async function () {
+    if (sending) return;
     const page = location.href;
     context = {
       page: location.hash || '#overview',
@@ -12392,9 +12393,11 @@ if(window.BIProductionConnector&&window.BIProductionConnector.state&&window.BIPr
   q('.cpd-review-select').addEventListener('click', function () { const area = q('.cpd-review-copy textarea'); area.focus(); area.select(); });
   q('.cpd-review-export').addEventListener('click', async function () {
     if (!notes.length || !screenshot || sending) return;
+    const sentNotes = new Set(notes);
     const latest = notes[notes.length - 1];
     const status = q('.cpd-review-status');
     sending = true;
+    form.inert = true;
     status.textContent = 'Sending feedback to Jane…';
     render();
     try {
@@ -12409,11 +12412,21 @@ if(window.BIProductionConnector&&window.BIProductionConnector.state&&window.BIPr
       });
       const result = await response.json().catch(() => ({}));
       if (!response.ok || !result.ok) throw new Error(result.error || 'Unable to send feedback. Please try again.');
-      status.textContent = 'Feedback sent to Jane. Reference: ' + result.reportId;
+      notes = notes.filter(note => !sentNotes.has(note));
+      if (deleted && sentNotes.has(deleted.note)) deleted = null;
+      reviewer = '';
+      persist();
+      form.reset();
+      form.elements.feedback.setCustomValidity('');
+      screenshot = '';
+      status.textContent = '';
+      if (dialog.open) dialog.close();
+      window.BIUI.toast('Feedback sent to Jane. Reference: ' + result.reportId);
     } catch (error) {
       status.textContent = error.message || 'Unable to send feedback. Please try again.';
     } finally {
       sending = false;
+      form.inert = false;
       render();
     }
   });
