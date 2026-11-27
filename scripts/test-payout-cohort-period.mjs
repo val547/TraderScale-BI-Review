@@ -156,8 +156,10 @@ assert.deepEqual(model.exportRows(ctx).map(row=>row.PaidPayoutsUSD),[60]);
 const unknown={id:'unknown',customerId:'unverified',paidDate:'2026-04-10',amount:40};
 parent.current.push(unknown);parent.ledger.rows.push(unknown);parent.totals={payments:2,amount:100};
 assert.deepEqual(model.exportFinancialRows(ctx).map(fields),[[175,16.5,60,98.5],[80,0,0,80],[null,null,40,null]]);
-assert.match(model.renderFinancialReport(ctx),/Selected cohort total.*\$255\.00.*\$16\.50.*\$100\.00.*Unavailable/);
+assert.match(model.renderFinancialReport(ctx),/Selected cohort total.*\$255\.00.*\$16\.50.*\$100\.00.*\$138\.50/);
 ctx.data.affiliatePnl.push(commission('2','2026-03-01',0,{amountKnown:false}));
-assert.deepEqual(fields(model.exportFinancialRows(ctx)[1]),[80,null,0,null]);
+assert.deepEqual(fields(model.exportFinancialRows(ctx)[1]),[80,0,0,80]);
+assert.equal(model.exportFinancialRows(ctx)[1].CommissionRecordsWithUnknownAmount,1);
+assert.match(model.renderFinancialReport(ctx), /1 commission records have an unconfirmed amount/);
 
 console.log('payout reporting period: acquisition-cohort filtering passed');

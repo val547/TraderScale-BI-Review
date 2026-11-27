@@ -8825,13 +8825,11 @@ if (location.protocol === 'file:') document.documentElement.classList.remove('pr
   function getFinancialReport(ctx){
     const report=getReport(ctx), revenue=report.payout.revenue.current;
     const commissionsReady=ctx.data.productionQuality?.affiliatePnlReady===true&&Array.isArray(ctx.data.affiliatePnl);
-    const months=new Map(report.groups.map(group=>[group.month,{...group,totalSales:0,commission:0}]));
+    const months=new Map(report.groups.map(group=>[group.month,{...group,totalSales:0,commission:0,missingCommission:0}]));
     const byOrder=new Map();
-    let unknownSales=false;
     for(const order of revenue.rows){
       const month=report.cohortIndex.lookup(order.customerId).month;
-      if(month===UNKNOWN)unknownSales=true;
-      if(!months.has(month))months.set(month,{month,label:monthText(month),amount:0,payments:0,clients:0,share:report.total.amount?0:null,totalSales:0,commission:0});
+      if(!months.has(month))months.set(month,{month,label:monthText(month),amount:0,payments:0,clients:0,share:report.total.amount?0:null,totalSales:0,commission:0,missingCommission:0});
       const row=months.get(month),sale=number(order.netSales);
       row.totalSales=row.totalSales===null||sale===null?null:row.totalSales+sale;
       byOrder.set(clean(order.id),row);
@@ -8842,22 +8840,25 @@ if (location.protocol === 'file:') document.documentElement.classList.remove('pr
       const row=byOrder.get(clean(component.storeId)+':'+clean(component.orderId));
       if(!row)continue;
       const amount=number(component.amount);
-      row.commission=row.commission===null||component.amountKnown===false||amount===null?null:row.commission+amount;
+      if(component.amountKnown===false||amount===null)row.missingCommission+=1;
+      else row.commission+=amount;
     }
     const salesReady=report.payout.revenue.available&&revenue.invalidDates===0;
     const groups=[...months.values()].sort((a,b)=>Number(a.month===UNKNOWN)-Number(b.month===UNKNOWN)||a.month.localeCompare(b.month));
+    const sum=key=>round(groups.reduce((total,row)=>total+(row[key]??0),0));
+    const totalSales=salesReady&&revenue.known?sum('totalSales'):null;
+    const commission=commissionsReady?sum('commission'):null;
+    const missingCommission=sum('missingCommission');
+    const pnl=totalSales===null||commission===null?null:round(totalSales-commission-report.total.amount);
     for(const row of groups){
       row.totalSales=salesReady&&row.month!==UNKNOWN&&row.totalSales!==null?round(row.totalSales):null;
       row.commission=commissionsReady&&row.month!==UNKNOWN&&row.commission!==null?round(row.commission):null;
       row.pnl=row.totalSales===null||row.commission===null?null:round(row.totalSales-row.commission-row.amount);
     }
-    const verified=groups.filter(row=>row.month!==UNKNOWN);
-    const total=(key,rows)=>rows.some(row=>row[key]===null)?null:round(rows.reduce((sum,row)=>sum+row[key],0));
     const pageCount=Math.max(1,Math.ceil(groups.length/PAGE_SIZE));
     const page=Math.min(int(ctx.local.payoutCohortFinancialPage),pageCount-1);
     return {...report,groups,page,pageCount,pageRows:groups.slice(page*PAGE_SIZE,(page+1)*PAGE_SIZE),
-      financialTotals:{totalSales:salesReady&&!unknownSales?total('totalSales',verified):null,commission:commissionsReady&&!unknownSales?total('commission',verified):null,
-        pnl:salesReady&&commissionsReady&&!report.payout.scopeCoverage.currentIncomplete?total('pnl',groups):null}};
+      financialTotals:{totalSales,commission,pnl,missingCommission}};
   }
 
   function renderFinancialReport(ctx){
@@ -8867,8 +8868,9 @@ if (location.protocol === 'file:') document.documentElement.classList.remove('pr
     const moneyCells=(row,paid)=>[row.totalSales,row.commission,paid,row.pnl].map(n=>'<td class="numeric">'+value(n)+'</td>').join('');
     const counts=(payments,clients,share)=>'<td class="numeric">'+u.number(payments)+'</td><td class="numeric">'+u.number(clients)+'</td><td class="numeric">'+pct(share)+'</td>';
     return '<section class="panel pc-panel"><div class="panel-header"><div><h2 class="panel-title">Cohort breakdown</h2><p class="panel-subtitle">'+u.escape(r.windows.currentLabel)+' · Through '+dayText(r.windows.asOf)+' · USD</p></div></div>'+
-      '<div class="pc-definition"><strong>P&L = Total Sales − Affiliate Commission − Paid payouts.</strong><span>Sales are canonical net challenge sales for the selected acquisition cohorts, including customers with no payout. Commission is recognized affiliate commission linked to those orders. Unverified cohort amounts remain unavailable.</span></div>'+
-      (r.payout.scopeCoverage.currentIncomplete?'<div class="pc-coverage">Only records that match the selected filters are shown. Total P&L is unavailable while attribution is incomplete.</div>':'')+
+      '<div class="pc-definition"><strong>P&L = Total Sales − Affiliate Commission − Paid payouts.</strong><span>Sales are canonical net challenge sales for the selected acquisition cohorts, including customers with no payout. Commission is recognized affiliate commission linked to those orders. The total uses all selected sales and all paid payouts shown, including those in Unknown cohort. Unknown payouts are not assigned to a month.</span></div>'+
+      (r.financialTotals.missingCommission?'<div class="pc-coverage">Commission and P&L use recognized amounts. '+u.number(r.financialTotals.missingCommission)+' commission records have an unconfirmed amount.</div>':'')+
+      (r.payout.scopeCoverage.currentIncomplete?'<div class="pc-coverage">Amounts cover records matched to the selected filters. Attribution is incomplete.</div>':'')+
       (r.groups.length?'<div class="table-wrap" tabindex="0" role="region" aria-label="Scrollable cohort P&L table"><table class="data-table pc-month-table"><thead><tr><th scope="col">First purchase month</th>'+
       ['Total Sales','Affiliate Commission','Paid payouts','P&L','Payout count','Paid clients','Share of payouts'].map(label=>'<th scope="col" class="numeric">'+label+'</th>').join('')+'</tr></thead><tbody>'+
       r.pageRows.map(row=>'<tr><th scope="row">'+(row.payments?'<button type="button" class="table-link" data-action="paycohort-detail" data-month="'+u.escape(row.month)+'">'+u.escape(row.label)+'</button>':u.escape(row.label))+'</th>'+
@@ -8882,7 +8884,7 @@ if (location.protocol === 'file:') document.documentElement.classList.remove('pr
     if(ctx.data.demo!==false)return [];
     const r=getFinancialReport(ctx);
     return r.groups.map(row=>({FirstPurchaseMonth:row.label,TotalSalesUSD:row.totalSales,AffiliateCommissionUSD:row.commission,PaidPayoutsUSD:row.amount,
-      PnLUSD:row.pnl,PayoutCount:row.payments,PaidClients:row.clients,ShareOfPayoutsPct:row.share,ObservedThrough:r.windows.asOf}));
+      PnLUSD:row.pnl,CommissionRecordsWithUnknownAmount:row.missingCommission,PayoutCount:row.payments,PaidClients:row.clients,ShareOfPayoutsPct:row.share,ObservedThrough:r.windows.asOf}));
   }
 
   const cashPeriodRender=render,cashPeriodDetail=detail,cashPeriodPaymentDetail=paymentDetail,cashPeriodExportRows=exportRows;
