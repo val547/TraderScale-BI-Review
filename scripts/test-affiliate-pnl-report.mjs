@@ -32,13 +32,19 @@ const ctx = {
 };
 assert.match(report.render(ctx), /data-value="performers">Top 10 performers<\/button>/);
 assert.match(report.render(ctx), /data-value="decliners">Top 10 decliners<\/button>/);
-assert.deepEqual(report.onAction("owner-aff-pnl-open",{dataset:{value:"performers"}},ctx), {navigate:"affiliate-pnl"});
+for (const value of ["performers","decliners"]) {
+  Object.assign(ctx.local,{ownerAffType:"fast-track",ownerAffPnlView:value,ownerAffPnlType:"traditional",ownerAffPnlPage:5});
+  assert.deepEqual(report.onAction("owner-aff-pnl-open",{dataset:{value}},ctx), {navigate:"affiliate-pnl"});
+  assert.deepEqual(ctx.local,{ownerAffType:"fast-track",ownerAffPnlView:"all",ownerAffPnlType:"all",ownerAffPnlPage:0});
+  assert.equal(report.exportPnl(ctx).length,3);
+}
+report.onAction("owner-aff-pnl-view",{dataset:{value:"performers"}},ctx);
 assert.match(report.renderPnl(ctx), /Commission earned/);
 assert.match(report.renderPnl(ctx), /Trader payouts/);
 const grows = report.exportPnl(ctx)[0];
 assert.deepEqual([grows.affiliate,grows.orders,grows.net_sales_usd,grows.commission_earned_usd,grows.trader_payouts_usd,grows.pnl_usd],
   ["grows",1,800,31.25,120,648.75]);
-assert.deepEqual(report.onAction("owner-aff-pnl-open",{dataset:{value:"decliners"}},ctx), {navigate:"affiliate-pnl"});
+report.onAction("owner-aff-pnl-view",{dataset:{value:"decliners"}},ctx);
 assert.match(report.renderPnl(ctx), /vs 1–26 Oct 2026/);
 const [falls] = report.exportPnl(ctx);
 assert.equal(falls.affiliate,"falls");
