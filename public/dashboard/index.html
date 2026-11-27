@@ -3080,10 +3080,29 @@ if (location.protocol === 'file:') document.documentElement.classList.remove('pr
     const profit=missing?null:cents(total.netSales-commissions-total.rewardCost-total.processing-total.platform-total.acquisition);
     return {...total,commissions,profit,margin:profit===null?null:pct(profit,total.netSales),profitPerAccount:profit===null?null:orders.length?profit/orders.length:0,otherCosts:missing?null:total.otherCosts,commissionComplete:missing===0,commissionRecordedOrders:orders.length-missing,commissionMissingOrders:missing};
   }
-  function sortAffiliateRows(rows,key){
-    if(key==='name')return rows.slice().sort((a,b)=>a.name.localeCompare(b.name));
-    const value=row=>row[key]===null||row[key]===undefined?-Infinity:Number(row[key]);
-    return rows.slice().sort((a,b)=>value(b)-value(a)||a.name.localeCompare(b.name));
+  const affiliatePerformanceColumns=[
+    ['orders','Orders'],['newCustomers','New customers'],['repeatCustomers','Repeat customers'],
+    ['netSales','Net sales'],['commissions','Commission earned'],['profit','Profit before overheads'],['margin','Margin'],['repeatShare','Repeat order share']
+  ];
+  const affiliateCostColumns=[
+    ['discounts','Discounts'],['refundsAndDisputes','Refunds & disputes'],['commissions','Commission earned'],
+    ['acquisition','Retainers & acquisition'],['rewardCost','Reward expense'],['processingAndPlatform','Processing & platform'],['profit','Profit']
+  ];
+  const affiliateSortLabels=new Map([['name','Name'],...affiliateCostColumns,...affiliatePerformanceColumns]);
+  const affiliateSortDirection=local=>local.econAffSortDirection||defaultProfitSortDirection(local.econAffSort);
+  function affiliateColumnValue(row,key){
+    if(key==='refundsAndDisputes')return row.refunds+row.chargebacks;
+    if(key==='processingAndPlatform')return row.processing+row.platform;
+    return row[key];
+  }
+  function sortAffiliateRows(rows,key,direction=defaultProfitSortDirection(key)){
+    return rows.slice().sort((a,b)=>{
+      const first=affiliateColumnValue(a,key),second=affiliateColumnValue(b,key);
+      if(key==='name')return a.name.localeCompare(b.name)*(direction==='ascending'?1:-1);
+      const missingFirst=recordedCommission(first)===null,missingSecond=recordedCommission(second)===null;
+      if(missingFirst||missingSecond)return Number(missingFirst)-Number(missingSecond)||a.name.localeCompare(b.name);
+      return (first-second)*(direction==='ascending'?1:-1)||a.name.localeCompare(b.name);
+    });
   }
   function uniqueAffiliateOrders(rows){
     const seen=new Set();
@@ -3148,9 +3167,9 @@ if (location.protocol === 'file:') document.documentElement.classList.remove('pr
       const typeRows=[{...fastTotals,id:'fast-track',name:'Fast Track',kind:'traffic',trafficType:'fast-track',trafficTypeLabel:'Fast Track',partners:liveRows.length},
         {...emptyTotals,id:'traditional',name:'Prop firm affiliates',kind:'traffic',trafficType:'traditional',trafficTypeLabel:'Prop firm affiliates',partners:0}];
       const scoped=type==='traditional'||type==='offers'?[]:liveRows;
-      const rows=mode==='overview'?typeRows:mode==='partners'?sortAffiliateRows(scoped,l.econAffSort):[];
+      const rows=mode==='overview'?typeRows:mode==='partners'?sortAffiliateRows(scoped,l.econAffSort,affiliateSortDirection(l)):[];
       const totals=mode==='overview'?fastTotals:combine(scoped);
-      return {type,mode,rows,typeRows,totals,scopeTotals:totals,partners:scoped.length,partnerRows:sortAffiliateRows(liveRows,'profit'),
+      return {type,mode,rows,typeRows,totals,scopeTotals:totals,partners:scoped.length,partnerRows:sortAffiliateRows(liveRows,l.econAffSort,affiliateSortDirection(l)),
         leaders:sortAffiliateRows(scoped,'profit').slice(0,4),selectedOrders:totals.orders,tracking:[],dualSignalOrders:0};
     }
     const scope=type==='offers'?all:affiliateOrders.filter(o=>type==='overview'||trafficType(o,ctx.data)===type);
@@ -3161,13 +3180,13 @@ if (location.protocol === 'file:') document.documentElement.classList.remove('pr
     });
     let rows=mode==='overview'?typeRows:acquisitionGroups(source,mode,ctx);
     const q=String(l.econAffSearch).trim().toLowerCase();
-    if(mode!=='overview') rows=sortAffiliateRows(rows.filter(r=>!q||(r.name+' '+r.country+' '+r.id+' '+r.secondary).toLowerCase().includes(q)),l.econAffSort);
+    if(mode!=='overview') rows=sortAffiliateRows(rows.filter(r=>!q||(r.name+' '+r.country+' '+r.id+' '+r.secondary).toLowerCase().includes(q)),l.econAffSort,affiliateSortDirection(l));
     const represented=mode==='overview'?scope:rows.flatMap(r=>r.rawOrders);
     const tracking=type==='offers'?[]:['code','link'].map(method=>{
       const orders=scope.filter(o=>trackingMethod(o)===method);
       return {method,label:method==='code'?'Discount codes':'Referral links',orders:orders.length,netSales:sum(orders,'netSales'),share:pct(orders.length,scope.length)};
     });
-    return {type,mode,rows,typeRows,totals:affiliateTotals(represented,ctx.data),scopeTotals:affiliateTotals(scope,ctx.data),partners:unique(represented.filter(o=>o.affiliateId),'affiliateId'),partnerRows:sortAffiliateRows(acquisitionGroups(scope.filter(o=>o.affiliateId),'partners',ctx),'profit'),leaders:sortAffiliateRows(rows,'profit').slice(0,4),selectedOrders:source.length,tracking,dualSignalOrders:scope.filter(o=>o.affiliateId&&trackingMethod(o)==='code'&&o.affiliateLinkId).length};
+    return {type,mode,rows,typeRows,totals:affiliateTotals(represented,ctx.data),scopeTotals:affiliateTotals(scope,ctx.data),partners:unique(represented.filter(o=>o.affiliateId),'affiliateId'),partnerRows:sortAffiliateRows(acquisitionGroups(scope.filter(o=>o.affiliateId),'partners',ctx),l.econAffSort,affiliateSortDirection(l)),leaders:sortAffiliateRows(rows,'profit').slice(0,4),selectedOrders:source.length,tracking,dualSignalOrders:scope.filter(o=>o.affiliateId&&trackingMethod(o)==='code'&&o.affiliateLinkId).length};
   }
   function helpers(ctx) {
     const u = ctx.ui, e = u.escape;
@@ -3194,7 +3213,7 @@ if (location.protocol === 'file:') document.documentElement.classList.remove('pr
   }
   function sortControl(ctx, aff) {
     const u=helpers(ctx), l=defaults(ctx.local), key=aff?'econAffSort':'econSort';
-    return '<label class="econ-select" for="' + key + '"><span>Rank by</span><select id="' + key + '" data-econ-control="' + key + '" aria-label="' + (aff ? 'Acquisition ranking' : 'Profitability ranking') + '">' + [['profit','Profit'],['netSales','Net sales'],...(aff?[['commissions','Commission earned']]:[['rewardCost','Reward expense'],['otherCosts','Other direct costs']]),['margin','Margin'],['orders','Orders'],['name','Name']].map(([v,n]) => u.option(v,n,l[key])).join('') + '</select></label>';
+    return '<label class="econ-select" for="' + key + '"><span>Rank by</span><select id="' + key + '" data-econ-control="' + key + '" aria-label="' + (aff ? 'Acquisition ranking' : 'Profitability ranking') + '">' + [['profit','Profit'],['netSales','Net sales'],...(aff?[['commissions','Commission earned']]:[['rewardCost','Reward expense'],['otherCosts','Other direct costs']]),['margin','Margin'],['orders','Orders'],['name','Name'],...(aff?[...affiliateSortLabels].filter(([id])=>!['profit','netSales','commissions','margin','orders','name'].includes(id)):[])].map(([v,n]) => u.option(v,n,l[key])).join('') + '</select></label>';
   }
   function blank(ctx, title, description) {
     const u = helpers(ctx);
@@ -3284,9 +3303,13 @@ if (location.protocol === 'file:') document.documentElement.classList.remove('pr
   }
   function affiliateTable(ctx, report) {
     const l=defaults(ctx.local), u=helpers(ctx), costs=l.econAffDisplay==='costs';
-    const header=costs?'<th class="numeric">Discounts</th><th class="numeric">Refunds & disputes</th><th class="numeric">Commission earned</th><th class="numeric">Retainers & acquisition</th><th class="numeric">Reward expense</th><th class="numeric">Processing & platform</th><th class="numeric">Profit</th>':'<th class="numeric">Orders</th><th class="numeric">New customers</th><th class="numeric">Repeat customers</th><th class="numeric">Net sales</th><th class="numeric">Commission earned</th><th class="numeric">Profit before overheads</th><th class="numeric">Margin</th><th class="numeric">Repeat order share</th>';
     const label={partners:'Partner',codes:'Discount code',links:'Referral link',promotions:'Promotion code'}[report.mode]||'Partner';
-    return '<div class="table-wrap"><table class="data-table econ-table"><thead><tr><th>'+label+'</th>'+header+'<th></th></tr></thead><tbody>'+report.rows.map(row=>'<tr><td><div class="person-cell"><span class="avatar avatar-sm">'+u.escape(row.initials)+'</span><div class="econ-row-name">'+u.detailButton(row)+'<small>'+u.escape(row.secondary||row.country||'')+'</small></div></div></td>'+(costs?u.moneyCell(row.discounts)+u.moneyCell(row.refunds+row.chargebacks)+u.moneyCell(row.commissions)+u.moneyCell(row.acquisition)+u.moneyCell(row.rewardCost)+u.moneyCell(row.processing+row.platform)+u.profitCell(row.profit):u.numberCell(row.orders)+u.numberCell(row.newCustomers)+u.numberCell(row.repeatCustomers)+u.moneyCell(row.netSales)+u.moneyCell(row.commissions)+u.profitCell(row.profit)+'<td class="numeric">'+(row.margin===null?'Unavailable':u.percent(row.margin))+'</td><td class="numeric">'+u.percent(row.repeatShare)+'</td>')+'<td>'+u.arrow(row)+'</td></tr>').join('')+'</tbody></table></div>';
+    const header=[['name',label],...(costs?affiliateCostColumns:affiliatePerformanceColumns)].map(([key,title])=>{
+      const direction=l.econAffSort===key?affiliateSortDirection(l):null;
+      return '<th scope="col"'+(key==='name'?'':' class="numeric"')+(direction?' aria-sort="'+direction+'"':'')+'><button type="button" class="table-sort" data-action="econ-aff-sort" data-value="'+key+'">'+u.escape(title)+
+        '<span class="sort-indicator" aria-hidden="true">'+(direction==='ascending'?'↑':direction==='descending'?'↓':'↕')+'</span></button></th>';
+    }).join('');
+    return '<div class="table-wrap"><table class="data-table econ-table"><thead><tr>'+header+'<th></th></tr></thead><tbody>'+report.rows.map(row=>'<tr><td><div class="person-cell"><span class="avatar avatar-sm">'+u.escape(row.initials)+'</span><div class="econ-row-name">'+u.detailButton(row)+'<small>'+u.escape(row.secondary||row.country||'')+'</small></div></div></td>'+(costs?u.moneyCell(row.discounts)+u.moneyCell(row.refunds+row.chargebacks)+u.moneyCell(row.commissions)+u.moneyCell(row.acquisition)+u.moneyCell(row.rewardCost)+u.moneyCell(row.processing+row.platform)+u.profitCell(row.profit):u.numberCell(row.orders)+u.numberCell(row.newCustomers)+u.numberCell(row.repeatCustomers)+u.moneyCell(row.netSales)+u.moneyCell(row.commissions)+u.profitCell(row.profit)+'<td class="numeric">'+(row.margin===null?'Unavailable':u.percent(row.margin))+'</td><td class="numeric">'+u.percent(row.repeatShare)+'</td>')+'<td>'+u.arrow(row)+'</td></tr>').join('')+'</tbody></table></div>';
   }
   function trackingPanel(ctx,r) {
     const u=helpers(ctx);
@@ -3295,7 +3318,7 @@ if (location.protocol === 'file:') document.documentElement.classList.remove('pr
   function renderAffiliateOverview(ctx,r) {
     const u=helpers(ctx),t=r.totals;
     const cards=[{label:'Affiliate net sales',value:u.money(t.netSales),note:'Fast Track + prop firm affiliates only'},{label:'Profit before overheads',value:commissionMoney(u,t.profit),note:t.partialCoverage?'Known P&L components · partial coverage':'Net sales − accrued commission − trader payouts'},{label:'Paying customers',value:u.number(t.customers),note:'Distinct customers across both traffic groups'},{label:'Active partners',value:u.number(r.partners),note:u.number(t.orders)+' attributed orders in this selection'},{label:'Commission earned',value:commissionMoney(u,t.commissions),note:t.commissionComplete?'Recognized accrued commission':u.number(t.commissionMissingOrders)+' records need coverage review'}];
-    return '<div class="econ-page">'+affiliateNavigation(ctx,r)+'<div class="page-kpis five">'+cards.map(c=>u.metric(c)).join('')+'</div><div class="econ-traffic-cards">'+r.typeRows.map(type=>'<section class="panel econ-traffic-card '+(type.id==='fast-track'?'fast':'traditional')+'"><div class="econ-traffic-title"><span class="econ-traffic-mark">'+u.icon(type.id==='fast-track'?'route':'users',22)+'</span><div><h2>'+u.escape(type.name)+'</h2><p>'+u.number(type.partners)+' partners · '+u.number(type.orders)+' orders · '+u.number(type.customers)+' customers</p></div></div><div class="econ-traffic-results"><div><span>Net sales</span><strong>'+u.money(type.netSales)+'</strong></div><div><span>Profit before overheads</span><strong class="'+(type.profit>=0?'positive':'negative')+'">'+commissionMoney(u,type.profit)+'</strong></div></div><div class="econ-traffic-costs"><div><span>Commission earned</span><strong>'+commissionMoney(u,type.commissions)+'</strong></div><div><span>Retainers & acquisition</span><strong>'+u.money(type.acquisition)+'</strong></div><div><span>Trader reward expense</span><strong>'+u.money(type.rewardCost)+'</strong></div><div><span>Processing & platform</span><strong>'+u.money(type.processing+type.platform)+'</strong></div><div><span>Profit margin</span><strong>'+(type.margin===null?'Unavailable':u.percent(type.margin))+'</strong></div></div><button class="btn btn-secondary btn-small" data-action="econ-aff-type" data-value="'+type.id+'">Explore '+u.escape(type.name)+' '+u.icon('arrow',14)+'</button></section>').join('')+'</div><section class="panel">'+u.head('Partners across both traffic types','Ranked by profit before overheads',u.export('acquisition'))+(r.partnerRows.length?affiliateTable({...ctx,local:{...ctx.local,econAffDisplay:'performance'}},{mode:'partners',rows:r.partnerRows}):blank(ctx,'No affiliate orders in this selection','Change the reporting period or global filters.'))+'<div class="panel-footer econ-footnote">The two traffic groups reconcile to total affiliate results. Commission earned comes from the recorded purchase ledger; retainers are separate and payment status is not measured.</div></section>'+trackingPanel(ctx,r)+'<div class="econ-method-note">'+u.icon('info',18)+'<div><strong>Two traffic groups, one clear view.</strong><p>Fast Track and prop firm affiliates are separate partner types. Each can use a code or a referral link. Traditional prop firm traffic is primarily code-tracked in this demo. “All offers” is a separate business-wide promotion report.</p></div></div></div>';
+    return '<div class="econ-page">'+affiliateNavigation(ctx,r)+'<div class="page-kpis five">'+cards.map(c=>u.metric(c)).join('')+'</div><div class="econ-traffic-cards">'+r.typeRows.map(type=>'<section class="panel econ-traffic-card '+(type.id==='fast-track'?'fast':'traditional')+'"><div class="econ-traffic-title"><span class="econ-traffic-mark">'+u.icon(type.id==='fast-track'?'route':'users',22)+'</span><div><h2>'+u.escape(type.name)+'</h2><p>'+u.number(type.partners)+' partners · '+u.number(type.orders)+' orders · '+u.number(type.customers)+' customers</p></div></div><div class="econ-traffic-results"><div><span>Net sales</span><strong>'+u.money(type.netSales)+'</strong></div><div><span>Profit before overheads</span><strong class="'+(type.profit>=0?'positive':'negative')+'">'+commissionMoney(u,type.profit)+'</strong></div></div><div class="econ-traffic-costs"><div><span>Commission earned</span><strong>'+commissionMoney(u,type.commissions)+'</strong></div><div><span>Retainers & acquisition</span><strong>'+u.money(type.acquisition)+'</strong></div><div><span>Trader reward expense</span><strong>'+u.money(type.rewardCost)+'</strong></div><div><span>Processing & platform</span><strong>'+u.money(type.processing+type.platform)+'</strong></div><div><span>Profit margin</span><strong>'+(type.margin===null?'Unavailable':u.percent(type.margin))+'</strong></div></div><button class="btn btn-secondary btn-small" data-action="econ-aff-type" data-value="'+type.id+'">Explore '+u.escape(type.name)+' '+u.icon('arrow',14)+'</button></section>').join('')+'</div><section class="panel">'+u.head('Partners across both traffic types','Ranked by '+(affiliateSortLabels.get(ctx.local.econAffSort)||'Profit before overheads').toLowerCase(),u.export('acquisition'))+(r.partnerRows.length?affiliateTable({...ctx,local:{...ctx.local,econAffDisplay:'performance'}},{mode:'partners',rows:r.partnerRows}):blank(ctx,'No affiliate orders in this selection','Change the reporting period or global filters.'))+'<div class="panel-footer econ-footnote">The two traffic groups reconcile to total affiliate results. Commission earned comes from the recorded purchase ledger; retainers are separate and payment status is not measured.</div></section>'+trackingPanel(ctx,r)+'<div class="econ-method-note">'+u.icon('info',18)+'<div><strong>Two traffic groups, one clear view.</strong><p>Fast Track and prop firm affiliates are separate partner types. Each can use a code or a referral link. Traditional prop firm traffic is primarily code-tracked in this demo. “All offers” is a separate business-wide promotion report.</p></div></div></div>';
   }
   function renderAffiliates(ctx) {
     const l=defaults(ctx.local),u=helpers(ctx),r=getAffiliateReport(ctx),t=r.totals;
@@ -3353,6 +3376,11 @@ if (location.protocol === 'file:') document.documentElement.classList.remove('pr
       l.econExpandedProgrammes=expanded.includes(d.value)?expanded.filter(id=>id!==d.value):[...expanded,d.value];
       return {rerender:true,focus:'[data-programme-key="'+encodeURIComponent(d.value)+'"]'};
     }
+    if(action==='econ-aff-sort'&&affiliateSortLabels.has(d.value)){
+      l.econAffSortDirection=l.econAffSort===d.value?(affiliateSortDirection(l)==='ascending'?'descending':'ascending'):defaultProfitSortDirection(d.value);
+      l.econAffSort=d.value;
+      return {rerender:true,focus:'[data-action="econ-aff-sort"][data-value="'+d.value+'"]'};
+    }
     if(action==='econ-sort'&&profitSortKeys.includes(d.value)){
       const direction=profitSortDirection(l);
       l.econSortDirection=l.econSort===d.value?(direction==='ascending'?'descending':'ascending'):defaultProfitSortDirection(d.value);
@@ -3380,7 +3408,7 @@ if (location.protocol === 'file:') document.documentElement.classList.remove('pr
     const key=el.dataset.econControl, l=defaults(ctx.local);
     if(['econSearch','econAffSearch'].includes(key)){l[key]=el.value;return {rerender:true};}
     if(key==='econSort'&&profitSortKeys.includes(el.value)){l.econSort=el.value;delete l.econSortDirection;return {rerender:true};}
-    if(key==='econAffSort'&&(['profit','netSales','margin','orders','name'].includes(el.value)||el.value==='commissions')){l[key]=el.value;return {rerender:true};}
+    if(key==='econAffSort'&&affiliateSortLabels.has(el.value)){l[key]=el.value;delete l.econAffSortDirection;return {rerender:true};}
     return null;
   }
   window.BIEconomics={renderProfitability,renderAffiliates,getProfitability,getAffiliateReport,detail,exportRows,onAction,onChange,promo,totals};
