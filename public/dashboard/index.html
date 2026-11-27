@@ -9290,11 +9290,14 @@ if (location.protocol === 'file:') document.documentElement.classList.remove('pr
     const production = window.BIProductionConnector && window.BIProductionConnector.state && window.BIProductionConnector.state.mode === 'production' ? window.BIProductionConnector.state : null;
     if (production) {
       const current = production.dateAllTime ? [first || last, availableEnd || last] : [production.dateStart, production.dateEnd];
-      const days = Math.max(1, Math.round((stamp(current[1]) - stamp(current[0])) / DAY) + 1);
-      const prior = [addDays(current[0], -days), addDays(current[0], -1)];
-      const comparable = Boolean(first && prior[0] >= first && prior[1] <= availableEnd);
-      return { period:'live', current, prior:comparable?prior:null, comparable, currentLabel:rangeLabel(current), priorLabel:comparable?rangeLabel(prior):'Unavailable', first, availableEnd,
-        reason:comparable?'Equal-length immediately preceding period; identical filters on both periods.':'A complete equal-length preceding period is unavailable. Missing history is not treated as zero.' };
+      const fullMonth = current[0].endsWith('-01') && current[0].slice(0, 7) === current[1].slice(0, 7) && addDays(current[1], 1).endsWith('-01');
+      const prior = production.dateAllTime ? null : fullMonth ? [monthBefore(current[0]), addDays(current[0], -1)] : current.map(monthBefore);
+      const matchesDates = prior && (fullMonth || (current.every((day, index) => day.slice(8) === prior[index].slice(8)) &&
+        stamp(current[1]) - stamp(current[0]) === stamp(prior[1]) - stamp(prior[0])));
+      const comparable = Boolean(first && matchesDates && prior[1] < current[0] && prior[0] >= first && prior[1] <= availableEnd);
+      return { period:'live', allTime:production.dateAllTime, current, prior:comparable?prior:null, comparable, currentLabel:rangeLabel(current), priorLabel:comparable?rangeLabel(prior):'Unavailable',
+        first, availableEnd, reason:comparable?(fullMonth?'Previous calendar month.':'Same calendar dates last month.')+' Identical filters on both periods.':production.dateAllTime?
+          'Choose a reporting period to compare with last month.':'A complete matching period last month is unavailable. Missing history is not treated as zero.' };
     }
     const period = ['mtd', '7d', 'lastmonth', '90d'].includes((ctx.filters || {}).period) ? ctx.filters.period : 'mtd';
     const monthStart = last.slice(0, 8) + '01';
@@ -9317,7 +9320,7 @@ if (location.protocol === 'file:') document.documentElement.classList.remove('pr
     const reason = comparable ? 'Same calendar dates last month; identical filters on both periods.' : period === '90d'
       ? 'All available history spans multiple months. Choose Month to date or Last 7 days for a monthly comparison.'
       : 'A complete matching period last month is unavailable in this sample. Missing history is not treated as zero.';
-    return { period, current, prior, comparable, currentLabel: rangeLabel(current), priorLabel: rangeLabel(prior), first, availableEnd, reason };
+    return { period, allTime: period === '90d', current, prior, comparable, currentLabel: rangeLabel(current), priorLabel: rangeLabel(prior), first, availableEnd, reason };
   }
 
   function settingsFor(ctx) {
@@ -9420,7 +9423,7 @@ if (location.protocol === 'file:') document.documentElement.classList.remove('pr
 
   function render(ctx) {
     const ui = ctx.ui, report = getReport(ctx), settings = report.settings;
-    const periodText = report.windows.currentLabel + (report.windows.prior ? ' vs ' + report.windows.priorLabel : ' · all available history');
+    const periodText = report.windows.currentLabel + (report.windows.prior ? ' vs ' + report.windows.priorLabel : report.windows.allTime ? ' · all available history' : '');
     return '<section class="panel owner-aff-panel" aria-labelledby="owner-aff-title"><div class="panel-header owner-aff-header"><div><h2 id="owner-aff-title" class="panel-title">Affiliate performance</h2><p class="panel-subtitle">' + ui.escape(periodText) + ' · USD</p></div>' +
       '<div class="owner-aff-controls"><div class="owner-aff-metric" role="group" aria-label="Affiliate ranking metric">' + Object.entries(metricLabels).map(([key, label]) => '<button data-action="owner-aff-metric" data-value="' + key + '" aria-pressed="' + (settings.metric === key) + '" class="' + (settings.metric === key ? 'active' : '') + '">' + label + '</button>').join('') + '</div>' +
       '<select data-owner-aff-control="type" aria-label="Affiliate traffic type">' + [['all', 'All affiliates'], ['fast-track', 'Fast Track'], ['traditional', 'Prop firm affiliates']].map(([key, label]) => '<option value="' + key + '"' + (settings.trafficType === key ? ' selected' : '') + '>' + label + '</option>').join('') + '</select></div></div>' +
