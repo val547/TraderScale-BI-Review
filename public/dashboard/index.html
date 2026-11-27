@@ -4535,6 +4535,26 @@ if (location.protocol === 'file:') document.documentElement.classList.remove('pr
     });
     return {meanDays:mean, medianDays:median, timingCount:ordered.length, maturity:maturity, bins:bins};
   }
+  var campaignModes = [['all', 'All customers'], ['with', 'Only NW5K / TS5K'], ['without', 'Exclude NW5K / TS5K']];
+  var campaignIndex;
+
+  function campaignReady(data) {
+    return window.BIFreeCouponCampaign?.available(data) && data.productionQuality.journeyReady !== false;
+  }
+  function campaignSource(data) {
+    var rows = window.BIFreeCouponCampaign.getAcquisitionRows(data);
+    if (campaignIndex?.rows === rows && campaignIndex.customers === data.customers) return campaignIndex;
+    var identities = new Map();
+    data.customers.forEach(function (customer) {
+      if (!customer.warehouseCustomerId || !customer.id) return;
+      var id = customer.warehouseCustomerId;
+      if (!identities.has(id)) identities.set(id, customer.id);
+      else if (identities.get(id) !== customer.id) identities.set(id, null);
+    });
+    campaignIndex = { rows: rows, customers: data.customers, identities: identities,
+      starts: new Map(rows.map(function (row) { return [row.id, row.free.at]; })) };
+    return campaignIndex;
+  }
   function getReport(ctx) {
     var h = buildHistory(ctx.data), f = ctx.filters || {}, local = ctx.local || {}, dates = range(f.period);
     var matching = h.rows.filter(function (r) {
@@ -4546,6 +4566,17 @@ if (location.protocol === 'file:') document.documentElement.classList.remove('pr
     var latest = Object.create(null);
     matching.forEach(function (row) { if (!latest[row.customerId] || row.breach.breachedAt > latest[row.customerId].breach.breachedAt) latest[row.customerId] = row; });
     var rows = Object.keys(latest).map(function (key) { return latest[key]; });
+    var campaignMode = local.rebuyCampaign || 'all';
+    if (campaignMode !== 'all' && campaignReady(ctx.data)) {
+      var campaign = campaignSource(ctx.data);
+      rows = rows.filter(function (row) {
+        var identity = campaign.identities.get(row.customerId);
+        if (!identity) return false;
+        var joinedAt = campaign.starts.get(identity);
+        var belongs = joinedAt !== undefined && joinedAt <= row.breach.breachedAt;
+        return campaignMode === 'with' ? belongs : !belongs;
+      });
+    }
     var rebought = rows.filter(function (r) { return !!r.rebuy; }), waiting = rows.filter(function (r) { return !r.rebuy; });
     var timing = timingSummary(rows), bins = timing.bins;
     var sizeChanges = ['Higher', 'Same', 'Lower'].map(function (name) { var count = rebought.filter(function (r) { return r.sizeChange === name; }).length; return { name: name, count: count, share: pct(count, rebought.length) }; });
@@ -4659,7 +4690,16 @@ if (location.protocol === 'file:') document.documentElement.classList.remove('pr
     var u = ctx.ui, l = ctx.local, report = getReport(ctx), tab = ['overview', 'records', 'migration'].indexOf(l.rebuyTab) >= 0 ? l.rebuyTab : 'overview';
     var timingNote = report.timingCount ? u.number(report.timingCount) + ' qualifying rebuyers only' : report.count ? 'No measured rebuys for this cohort' : 'No verified breaches match the selected filters';
     var cohortDates = dateLabel(Date.parse(report.dates[0] + 'T00:00:00Z')) + ' – ' + dateLabel(Date.parse(report.dates[1] + 'T00:00:00Z'));
-    return '<div class="rebuy-page"><div class="rebuy-intro"><div><span class="rebuy-intro-label">BREACH → REBUY</span><p>Time from a customer’s latest breach to their next successful challenge purchase.</p></div><button class="text-link" data-action="rebuy-method">How this is measured ' + u.icon('info', 14) + '</button></div><div class="page-kpis rebuy-summary-kpis">' +
+    var campaignControl = '';
+    if (ctx.data.demo === false) {
+      var ready = campaignReady(ctx.data);
+      campaignControl = '<div class="rebuy-controls"><label class="rebuy-select"><span>Free coupon campaigns</span><select data-rebuy-control="campaign"' +
+        (ready ? '' : ' disabled') + '>' + options(campaignModes, ready ? l.rebuyCampaign || 'all' : 'all', u) +
+        '</select></label><span class="muted">' + (ready
+          ? 'Based on the first qualifying free checkout before or at the breach. Filtered views require a verified customer match.'
+          : 'Campaign checkout or customer identity data is unavailable. Showing all customers.') + '</span></div>';
+    }
+    return '<div class="rebuy-page"><div class="rebuy-intro"><div><span class="rebuy-intro-label">BREACH → REBUY</span><p>Time from a customer’s latest breach to their next successful challenge purchase.</p></div><button class="text-link" data-action="rebuy-method">How this is measured ' + u.icon('info', 14) + '</button></div>' + campaignControl + '<div class="page-kpis rebuy-summary-kpis">' +
       u.metric({ label: 'Average rebuy time', value: elapsed(report.meanDays), note: 'Arithmetic mean · ' + timingNote, icon: 'clock' }) +
       u.metric({ label: 'Median rebuy time', value: elapsed(report.medianDays), note: timingNote, icon: 'clock' }) +
       u.metric({ label: 'Rebought', value: u.number(report.rebuyCount), note: emptyValue(u, report.observedRate) + ' of the cohort · observed to date', icon: 'refresh' }) +
@@ -4736,6 +4776,12 @@ if (location.protocol === 'file:') document.documentElement.classList.remove('pr
   }
   function onChange(el, ctx) {
     var key = el.dataset.rebuyControl;
+    if (key === 'campaign') {
+      if (!campaignReady(ctx.data) || !campaignModes.some(function (mode) { return mode[0] === el.value; })) return {rerender:false};
+      ctx.local.rebuyCampaign = el.value;
+      ctx.local.rebuyPage = 0;
+      return { rerender: true };
+    }
     if (key === 'codeScope') {
       if (el.value === 'observed') ctx.local.rebuyCodeScope = 'observed';
       else if ([7,14,30].indexOf(Number(el.value)) >= 0) { ctx.local.rebuyCodeScope = 'window'; ctx.local.rebuyWindow = Number(el.value); }
@@ -9610,7 +9656,7 @@ if (location.protocol === 'file:') document.documentElement.classList.remove('pr
   const pnlMoney = value => value == null ? 'Unavailable' : pnlCurrency.format(value);
 
   function pnlReport(ctx) {
-    const report = getReport(ctx), data = ctx.data, filters = ctx.filters || {};
+    const report = getReport({...ctx, local:{...ctx.local, ownerAffType:ctx.local.ownerAffPnlType}}), data = ctx.data, filters = ctx.filters || {};
     const view = Object.hasOwn(pnlViews, ctx.local.ownerAffPnlView) ? ctx.local.ownerAffPnlView : 'all';
     const ready = data.productionQuality?.affiliatePnlReady && Array.isArray(data.affiliatePnl);
     const expenses = new Map();
@@ -9678,10 +9724,14 @@ if (location.protocol === 'file:') document.documentElement.classList.remove('pr
 
   function onAction(action, element, ctx) {
     const value = element && element.dataset ? element.dataset.value : '';
-    if ((action === 'owner-aff-pnl-open' || action === 'owner-aff-pnl-view') && Object.hasOwn(pnlViews,value)) {
+    if (action === 'owner-aff-pnl-open') {
+      Object.assign(ctx.local,{ownerAffPnlView:'all',ownerAffPnlType:'all',ownerAffPnlPage:0});
+      return {navigate:'affiliate-pnl'};
+    }
+    if (action === 'owner-aff-pnl-view' && Object.hasOwn(pnlViews,value)) {
       ctx.local.ownerAffPnlView = value;
       ctx.local.ownerAffPnlPage = 0;
-      return action === 'owner-aff-pnl-open' ? {navigate:'affiliate-pnl'} : {rerender:true,focus:'[data-action="owner-aff-pnl-view"][data-value="'+value+'"]'};
+      return {rerender:true,focus:'[data-action="owner-aff-pnl-view"][data-value="'+value+'"]'};
     }
     if (action === 'owner-aff-pnl-page') {
       ctx.local.ownerAffPnlPage = Math.max(0, Math.floor(Number(value) || 0));
@@ -9703,8 +9753,10 @@ if (location.protocol === 'file:') document.documentElement.classList.remove('pr
 
   function onChange(element, ctx) {
     if (element.getAttribute('data-owner-aff-control') === 'type' && ['all', 'fast-track', 'traditional'].includes(element.value)) {
-      ctx.local.ownerAffType = element.value;
-      ctx.local.ownerAffPnlPage = 0;
+      if (ctx.page === 'affiliate-pnl') {
+        ctx.local.ownerAffPnlType = element.value;
+        ctx.local.ownerAffPnlPage = 0;
+      } else ctx.local.ownerAffType = element.value;
     }
     return { rerender: true };
   }
@@ -11028,7 +11080,7 @@ if (location.protocol === 'file:') document.documentElement.classList.remove('pr
       first_paid_checkout_utc:row.firstPaid?new Date(row.firstPaid.at).toISOString():'',first_paid_product:row.firstPaid?paidKinds[row.firstPaid.kind]:'',hours_to_first_paid:row.lag!=null?Math.round(row.lag/HOUR*100)/100:'',
       converted:!!row.firstPaid,conversion_window_days:scope.days||'',total_ltv_usd:row.ltv/100,observed_through_utc:new Date(r.cutoff).toISOString(),source:'canonical warehouse orders'}));
   }
-  window.BIFreeCouponCampaign={available,render,getReport,buildCohort,onAction,onChange,exportRows};
+  window.BIFreeCouponCampaign={available,render,getReport,buildCohort,onAction,onChange,exportRows,getAcquisitionRows:data=>sample(data).rows};
 })();
 </script>
 <script data-source="challenge-outcomes.js">
@@ -11753,7 +11805,7 @@ if (location.protocol === 'file:') document.documentElement.classList.remove('pr
       const report = catalogue(ctx).find(item => item.id === data.id);
       if (!report) return { rerender: false };
       if (report.id === 'affiliates') local.affiliatesView = 'growth';
-      if (report.id === 'affiliate-pnl') { local.ownerAffPnlView = 'all'; local.ownerAffPnlPage = 0; }
+      if (report.id === 'affiliate-pnl') return window.BIOwnerAffiliates.onAction('owner-aff-pnl-open',null,ctx);
       return { navigate: report.page };
     }
     return null;
@@ -12136,7 +12188,7 @@ if(window.BIProductionConnector&&window.BIProductionConnector.state&&window.BIPr
     catch (_) { storageAvailable = false; }
   }
   function buildText() {
-    const heading = 'TRADERSCALE BI — OPERATIONS REVIEW\nPortable demo v15 · Prepared 27 October 2026\nFinancial / trader sample snapshot: 25 October 2026\n';
+    const heading = 'TRADERSCALE BI — INTERNAL FEEDBACK\n';
     if (!notes.length) return heading + '\nNo feedback notes recorded yet.\n';
     return heading + '\n' + notes.map((n, index) => [
       (index + 1) + '. ' + n.title + ' (' + n.page + ')',
@@ -12151,24 +12203,24 @@ if(window.BIProductionConnector&&window.BIProductionConnector.state&&window.BIPr
   const host = document.createElement('div');
   host.className = 'cpd-review-host';
   host.innerHTML = '<button type="button" class="cpd-review-launch" aria-haspopup="dialog" aria-controls="cpd-review-dialog"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M21 11a8 8 0 0 1-8 8H7l-5 3 1.5-6A8 8 0 1 1 21 11Z"/><path d="M7 8h9M7 12h6"/></svg> Review feedback <span class="cpd-review-count">0</span></button>' +
-    '<dialog id="cpd-review-dialog" class="cpd-review-dialog" aria-labelledby="cpd-review-title"><header class="cpd-review-head"><div><span class="cpd-review-eyebrow">PORTABLE REVIEW COPY · V15</span><h2 id="cpd-review-title">Review feedback</h2></div><button type="button" class="cpd-review-close" aria-label="Close review feedback">×</button></header>' +
-    '<div class="cpd-review-content"><p class="cpd-review-intro">Capture what should change, why it matters, and what you expected to see. Export your notes and send the file back to Luke.</p>' +
+    '<dialog id="cpd-review-dialog" class="cpd-review-dialog" aria-labelledby="cpd-review-title"><header class="cpd-review-head"><div><span class="cpd-review-eyebrow">TRADERSCALE BI · INTERNAL</span><h2 id="cpd-review-title">Review feedback</h2></div><button type="button" class="cpd-review-close" aria-label="Close review feedback">×</button></header>' +
+    '<div class="cpd-review-content"><p class="cpd-review-intro">Record a bug or suggestion for the TraderScale team. Include what happened and what you expected. Copy or download your notes to share them with the team.</p>' +
     '<p class="cpd-review-storage" role="status"></p><form class="cpd-review-form"><div class="cpd-review-context"></div>' +
     '<label class="cpd-review-label">Your name <span>(optional)</span><input name="reviewer" maxlength="100" autocomplete="name" placeholder="Operations review"></label>' +
     '<div class="cpd-review-fields"><label class="cpd-review-label">Priority<select name="priority">' + priorities.map(p => '<option>' + p + '</option>').join('') + '</select></label>' +
     '<label class="cpd-review-label">Category<select name="category">' + categories.map(c => '<option>' + c + '</option>').join('') + '</select></label></div>' +
-    '<label class="cpd-review-label">Feedback<textarea name="feedback" rows="4" maxlength="3000" required placeholder="For example: On Client lifetime profit, add an owner filter so we can review actions assigned to each team member."></textarea></label>' +
+    '<label class="cpd-review-label">Feedback<textarea name="feedback" rows="4" maxlength="3000" required placeholder="For example: In Payouts, changing the reporting period leaves the totals unchanged. I expected the totals to update."></textarea></label>' +
     '<div class="cpd-review-save-line"><span class="cpd-review-status" role="status" aria-live="polite"></span><button type="submit" class="cpd-review-primary">Save note</button></div></form>' +
     '<section class="cpd-review-saved" aria-label="Saved feedback notes"><div class="cpd-review-section-heading"><h3>Saved notes <span class="cpd-review-saved-count">0</span></h3><button type="button" class="cpd-review-undo" hidden>Undo removal</button></div><div class="cpd-review-notes"></div></section>' +
     '<details class="cpd-review-copy"><summary>Copy feedback as text</summary><p>Select the text below to copy it into a message if downloading is unavailable.</p><textarea aria-label="All feedback as text" rows="8" readonly></textarea><button type="button" class="cpd-review-select">Select all text</button></details></div>' +
-    '<footer class="cpd-review-footer"><p>Notes stay in this browser. Nothing is sent automatically.</p><button type="button" class="cpd-review-export">Download feedback (.txt)</button></footer></dialog>';
+    '<footer class="cpd-review-footer"><p>Sharing is manual. You can copy or download your notes.</p><button type="button" class="cpd-review-export">Download feedback (.txt)</button></footer></dialog>';
   document.body.appendChild(host);
   const q = selector => host.querySelector(selector);
   const dialog = q('dialog'), form = q('form'), launcher = q('.cpd-review-launch');
   function render() {
     q('.cpd-review-count').textContent = String(notes.length);
     q('.cpd-review-saved-count').textContent = String(notes.length);
-    q('.cpd-review-storage').textContent = storageAvailable ? 'Saved locally in this browser. Download your feedback before moving or replacing this demo file.' : 'This browser is not saving local data. Your notes work for this session; download them before closing this tab.';
+    q('.cpd-review-storage').textContent = storageAvailable ? 'Notes are saved in this browser. Copy or download them to share with the team.' : 'This browser is not saving local data. Your notes work for this session; download them before closing this tab.';
     q('.cpd-review-storage').classList.toggle('cpd-review-warning', !storageAvailable);
     q('.cpd-review-export').disabled = !notes.length;
     q('.cpd-review-undo').hidden = !deleted;
