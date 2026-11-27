@@ -1404,7 +1404,7 @@
       dateControl.setAttribute('data-live-date-view', 'current-release:' + page);
       return;
     }
-    var datedPages = new Set(['overview', 'revenue', 'accounts', 'pipeline', 'cohort-economics', 'affiliates', 'affiliate-pnl', 'competitors', 'pricing', 'marketing', 'rebuy', 'updates', 'ltv', 'client-profit', 'journey', 'risk-radar', 'reports']);
+    var datedPages = new Set(['overview', 'revenue', 'accounts', 'pipeline', 'affiliates', 'affiliate-pnl', 'competitors', 'pricing', 'marketing', 'rebuy', 'updates', 'ltv', 'client-profit', 'journey', 'risk-radar', 'reports']);
     if (!datedPages.has(page)) return;
     dateControl.hidden = false;
     var key = state.dateAllTime + ':' + state.dateStart + ':' + state.dateEnd + ':' + state.datePickerOpen;
