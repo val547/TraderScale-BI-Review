@@ -89,7 +89,7 @@ assert.doesNotMatch(cohortSource, /FictionalDemo/,
   'Live payout cohort exports must never be labelled as fictional or demo data.');
 
 const testWindow = {};
-new Function('window', moduleSource.replace('window.BIPayoutHistory={', 'window.testTrend=trend; window.BIPayoutHistory={'))(testWindow);
+new Function('window', moduleSource.replace('window.BIPayoutHistory={', 'window.testTrend=trend; window.testProductCharts=productCharts; window.BIPayoutHistory={'))(testWindow);
 const trend = testWindow.testTrend;
 const ui = { escape: String, number: String, money: value => '$' + value, icon: () => '' };
 const points = [
@@ -108,5 +108,22 @@ assert.match(chart, /data-revenue="Unavailable" data-ratio="Unavailable"/);
 assert.doesNotMatch(trend({ ui }, { ...report, state: { trendMetric: 'count' } }), /data-field="revenue"/);
 assert.doesNotMatch(trend({ ui }, { ...report, series: { points: [], monthly: false } }), /tabindex="0"|data-ph-trend-point/);
 assert.match(trend({ ui }, { ...report, series: { points, monthly: true } }), /data-ph-trend-point="0"/);
+
+
+const payments = Array.from({ length: 13 }, (_, i) => ({
+  programme: 'Plan ' + (i + 1), accountSize: String((i + 1) * 1000), customerId: 'customer-' + i, amount: (i + 1) * 10,
+}));
+const productCharts = testWindow.testProductCharts({ ui }, { current: payments, totals: { amount: 910 } });
+const productKeys = [...productCharts.matchAll(/data-dimension="programme" data-id="([^"]+)"/g)].map(([, key]) => key);
+assert.deepEqual(productKeys, [...payments].reverse().slice(0, 10).map(payment => payment.programme));
+assert.equal([...productCharts.matchAll(/data-dimension="accountSize"/g)].length, 13);
+assert.match(productCharts, /data-id="Plan 13"[^>]*>.*?14\.3% share/);
+assert.equal([...productCharts.matchAll(/data-action="payout-history-all-plans"/g)].length, 2);
+const navigation = { local: { payoutHistoryDimension: 'country', payoutHistorySort: 'growth',
+  payoutHistorySearch: 'old search', payoutHistoryPage: 3, payoutHistoryAffiliate: 'partner' } };
+assert.deepEqual(testWindow.BIPayoutHistory.onAction('payout-history-all-plans', { dataset: {} }, navigation),
+  { rerender: true, focus: '#payout-plan-breakdown' });
+assert.deepEqual(navigation.local, { payoutHistoryDimension: 'programme', payoutHistorySort: 'amount',
+  payoutHistorySearch: '', payoutHistoryPage: 0, payoutHistoryAffiliate: 'partner' });
 
 console.log('payout reporting period: acquisition-cohort filtering passed');
