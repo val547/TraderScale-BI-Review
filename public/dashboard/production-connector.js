@@ -519,9 +519,10 @@
     };
     data.filterAccounts = function (filters) {
       filters = filters || {};
-      return cached('accounts', filterKey(filters), function () {
+      return cached('accounts', filterKey(filters, filters.excludeCompetition ? 'commercial-accounts' : ''), function () {
         return data.accounts.filter(function (row) {
           return inDateRange(row.openedAt)
+            && (!filters.excludeCompetition || !data.isCompetitionAccount(row))
             && (!filters.programme || filters.programme === 'all' || row.programme === filters.programme)
             && (!filters.country || filters.country === 'all' || row.country === filters.country)
             && (!filters.channel || filters.channel === 'all' || row.channel === filters.channel)
@@ -534,7 +535,7 @@
     data.orders.forEach(function (row) { orderMap[row.id] = row; });
     data.getAccountGroups = function (filters, groupBy) {
       var key = groupBy === 'accountSize' ? 'accountSize' : 'programme';
-      return cached('account-groups', filterKey(filters, key), function () {
+      return cached('account-groups', filterKey(filters, key + (filters?.excludeCompetition ? ':commercial' : '')), function () {
         var groups = {};
         data.filterAccounts(filters).forEach(function (row) {
         var name = row[key];
