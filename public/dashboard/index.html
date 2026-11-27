@@ -554,6 +554,12 @@ body.overlay-open{overflow:hidden}.drawer-header p{font-size:11px;color:#8f9caa;
 .ph-trend-tooltip{position:absolute;z-index:2;pointer-events:none;min-width:min(210px,calc(100% - 16px));max-width:calc(100% - 16px);padding:10px 12px;border:1px solid #dce4ec;border-radius:8px;background:#fff;color:#465c70;box-shadow:0 4px 14px #24384f1a;font-size:11px;font-variant-numeric:tabular-nums}
 .ph-trend-tooltip>strong{display:block;margin-bottom:5px;color:#23364a;font-size:12px}
 .ph-trend-tooltip dl{margin:0}
+[data-point-chart]{position:relative}
+[data-point-chart] .ph-trend-hit{pointer-events:all}
+[data-point-chart]:focus-visible{outline:2px solid #d89569;outline-offset:-3px;border-radius:6px}
+.chart-point-tooltip{text-align:left;font-weight:400}
+.chart-point-row{display:flex;justify-content:space-between;gap:14px;padding-top:3px}
+.chart-point-row>span:last-child{color:#23364a;font-weight:650;text-align:right}
 .ph-trend-tooltip dl>div{display:flex;justify-content:space-between;gap:14px;padding-top:3px}
 .ph-trend-tooltip dd{margin:0;color:#23364a;font-weight:650;text-align:right}
 .ph-gridline{stroke:#e9eef3;stroke-dasharray:3 5}
@@ -2272,19 +2278,18 @@ if (location.protocol === 'file:') document.documentElement.classList.remove('pr
     const max=Math.ceil(rawMax/step)*step;
     const x=index=>P.left+index*(W-P.left-P.right)/Math.max(1,report.dates.length-1),y=value=>P.top+(1-value/max)*(H-P.top-P.bottom);
     const summary='Daily canonical matched revenue attributed by ThoughtMetric, in US dollars. '+report.visible.map(channel=>channel.label+': '+ui.money(channel.netSales)).join('; ')+'.';
-    let html='<div class="channels-trend"><svg viewBox="0 0 '+W+' '+H+'" role="img" aria-label="'+ui.escape(summary)+'"><title>'+ui.escape(summary)+'</title>';
+    const inspection = ui.chartInspection(report.dates.map((date,index)=>({
+      date:dateText(date),values:report.visible.map(channel=>ui.chartMoney(channel.daily[index].netSales))
+    })),report.visible.map(channel=>channel.label),x,P.left,W-P.right,P.top,H-P.top-P.bottom);
+    let html='<div class="channels-trend" data-point-chart tabindex="0" role="group" aria-label="Daily attributed revenue. Use the left and right arrows to inspect dates."><svg viewBox="0 0 '+W+' '+H+'" role="img" aria-label="'+ui.escape(summary)+'"><title>'+ui.escape(summary)+'</title>';
     for(let i=0;i<=4;i++){const value=max*i/4,yy=y(value);html+='<line x1="'+P.left+'" y1="'+yy.toFixed(1)+'" x2="'+(W-P.right)+'" y2="'+yy.toFixed(1)+'" stroke="#e7ebef" stroke-dasharray="3 5"/><text x="'+(P.left-12)+'" y="'+(yy+4).toFixed(1)+'" text-anchor="end" fill="#8c99a7" font-size="11">'+ui.escape(ui.compact(value))+'</text>';}
     report.visible.forEach(channel=>{
       const path=channel.daily.map((row,index)=>(index?'L':'M')+x(index).toFixed(1)+','+y(row.netSales).toFixed(1)).join(' ');
       html+='<path d="'+path+'" fill="none" stroke="'+channel.color+'" stroke-width="2.35" stroke-linejoin="round" stroke-linecap="round"><title>'+ui.escape(channel.label+' · '+ui.money(channel.netSales))+'</title></path>';
       channel.daily.forEach((row,index)=>{html+='<circle cx="'+x(index).toFixed(1)+'" cy="'+y(row.netSales).toFixed(1)+'" r="'+(report.dates.length<=7?'3.3':'2.4')+'" fill="#fff" stroke="'+channel.color+'" stroke-width="1.7"><title>'+ui.escape(dateText(row.date)+' · '+channel.label+'\nAttributed revenue: '+ui.money(row.netSales)+'\nAttributed order credits: '+row.orders.toFixed(2))+'</title></circle>';});
     });
-    report.dates.forEach((date,index)=>{
-      const width=(W-P.left-P.right)/Math.max(1,report.dates.length-1);
-      html+='<rect x="'+Math.max(P.left,x(index)-width/2).toFixed(1)+'" y="'+P.top+'" width="'+Math.min(width,W-P.right-Math.max(P.left,x(index)-width/2)).toFixed(1)+'" height="'+(H-P.top-P.bottom)+'" fill="transparent"><title>'+ui.escape(dateText(date)+'\n'+report.visible.map(channel=>channel.label+': '+ui.money(channel.daily[index].netSales)).join('\n'))+'</title></rect>';
-    });
     [...new Set([0,1,2,3,4,5,6].map(n=>Math.round((report.dates.length-1)*n/6)))].forEach(index=>{html+='<text x="'+x(index).toFixed(1)+'" y="'+(H-10)+'" text-anchor="middle" fill="#8c99a7" font-size="11">'+ui.escape(dateText(report.dates[index]))+'</text>';});
-    return html+'</svg></div>';
+    return html+inspection.overlay+'</svg>'+inspection.tooltip+'</div>';
   }
 
   function split(report,ui){
@@ -8560,6 +8565,7 @@ if (location.protocol === 'file:') document.documentElement.classList.remove('pr
     const title = tooltip.querySelector('strong');
     const values = Array.from(tooltip.querySelectorAll('[data-field]'));
     const status = chart.querySelector('[role="status"]');
+    const focusTarget = chart.closest('.ov-trend-strip') || chart;
     let index = 0;
     function show(point, announce = false) {
       index = Number(point.dataset.phTrendPoint);
@@ -8573,7 +8579,7 @@ if (location.protocol === 'file:') document.documentElement.classList.remove('pr
       const anchor = line.left - frame.left, width = tooltip.offsetWidth;
       const rightLimit = frame.width - width - 8;
       const preferred = anchor + 10 <= rightLimit ? anchor + 10 : anchor - width - 10;
-      tooltip.style.left = Math.max(8,Math.min(preferred,rightLimit)) + 'px';
+      tooltip.style.left = (chart.scrollLeft + Math.max(8,Math.min(preferred,rightLimit))) + 'px';
       tooltip.style.top = Math.max(6,line.top-frame.top+6) + 'px';
       if (announce) status.textContent = [title.textContent,...values.map(value => value.previousElementSibling.textContent+' '+value.textContent)].join('. ');
     }
@@ -8590,9 +8596,9 @@ if (location.protocol === 'file:') document.documentElement.classList.remove('pr
     chart.addEventListener('pointerover',inspectPointer);
     chart.addEventListener('pointerdown',inspectPointer);
     chart.addEventListener('pointerleave',hide);
-    chart.addEventListener('focus',() => show(points[index],true));
-    chart.addEventListener('blur',hide);
-    chart.addEventListener('keydown',event => {
+    focusTarget.addEventListener('focus',() => show(points[index],true));
+    focusTarget.addEventListener('blur',hide);
+    focusTarget.addEventListener('keydown',event => {
       const next = {ArrowLeft:index-1, ArrowRight:index+1, Home:0, End:points.length-1};
       if (event.key === 'Escape') {
         hide();
@@ -9112,8 +9118,11 @@ if (location.protocol === 'file:') document.documentElement.classList.remove('pr
     let open=false;const path=points.map((p,i)=>{if(!p.covered||p.totals.revenueLtv==null){open=false;return '';}const part=(open?'L':'M')+x(i).toFixed(2)+','+y(p.totals.revenueLtv).toFixed(2);open=true;return part;}).join(' ');
     const description=points.map(p=>short(p.asOf)+': '+(p.covered&&p.totals.revenueLtv!=null?preciseMoney(p.totals.revenueLtv):'unavailable')).join('; ');
     const heading=change.available?'Revenue LTV '+(change.direction==='flat'?'is unchanged':change.direction==='up'?'is rising':'is falling'):'Revenue LTV trend';
-    const graphic=valid.length?'<svg viewBox="0 0 '+w+' '+h+'" role="img" aria-label="Rolling 12-month revenue LTV by purchase cutoff. '+u.escape(description)+'"><path d="'+path+'" class="ov-trend-line"/>'+points.map((p,i)=>'<text x="'+x(i)+'" y="'+(h-2)+'" text-anchor="'+(i===0?'start':i===points.length-1?'end':'middle')+'">'+u.escape(short(p.asOf))+'</text>'+(p.covered&&p.totals.revenueLtv!=null?'<circle cx="'+x(i)+'" cy="'+y(p.totals.revenueLtv)+'" r="'+(i===points.length-1?'4':'2.5')+'"><title>'+u.escape(labelDate(p.asOf)+': '+preciseMoney(p.totals.revenueLtv))+'</title></circle>':'')).join('')+'</svg>':'<span class="ov-trend-empty">A full 12 months of history is needed for each point.</span>';
-    return '<button class="ov-trend-strip '+change.direction+'" data-action="owner-value-trend"><span class="ov-trend-caption"><strong>'+heading+'</strong><small>'+(change.available?u.escape(changeLabel('revenue',change))+' vs '+u.escape(short(trend.previous.asOf)):'Comparable prior history is unavailable')+'</small><em>Each point: rolling 12 months · same day of month</em></span><span class="ov-trend-graphic">'+graphic+'</span><span class="ov-trend-link">View trend '+u.icon('arrow',13)+'</span></button>';
+    const inspection = valid.length?u.chartInspection(points.map(p=>({
+      date:labelDate(p.asOf),values:[p.covered?u.chartMoney(p.totals.revenueLtv):'Unavailable']
+    })),['Revenue LTV'],x,left,w-right,0,h-bottom):null;
+    const graphic=valid.length?'<svg viewBox="0 0 '+w+' '+h+'" role="img" aria-label="Rolling 12-month revenue LTV by purchase cutoff. '+u.escape(description)+'"><path d="'+path+'" class="ov-trend-line"/>'+points.map((p,i)=>'<text x="'+x(i)+'" y="'+(h-2)+'" text-anchor="'+(i===0?'start':i===points.length-1?'end':'middle')+'">'+u.escape(short(p.asOf))+'</text>'+(p.covered&&p.totals.revenueLtv!=null?'<circle cx="'+x(i)+'" cy="'+y(p.totals.revenueLtv)+'" r="'+(i===points.length-1?'4':'2.5')+'"/>':'')).join('')+inspection.overlay+'</svg>'+inspection.tooltip:'<span class="ov-trend-empty">A full 12 months of history is needed for each point.</span>';
+    return '<button class="ov-trend-strip '+change.direction+'" data-action="owner-value-trend"><span class="ov-trend-caption"><strong>'+heading+'</strong><small>'+(change.available?u.escape(changeLabel('revenue',change))+' vs '+u.escape(short(trend.previous.asOf)):'Comparable prior history is unavailable')+'</small><em>Each point: rolling 12 months · same day of month</em></span><span class="ov-trend-graphic"'+(inspection?' data-point-chart':'')+'>'+graphic+'</span><span class="ov-trend-link">View trend '+u.icon('arrow',13)+'</span></button>';
   }
   function trendDetail(ctx){
     const t=getOverviewTrend(ctx),u=ctx.ui,scope=['programme','country'].filter(k=>t.filters[k]&&t.filters[k]!=='all').map(k=>k+': '+t.filters[k]).join(' · ')||'All programmes and countries';
@@ -11584,14 +11593,35 @@ function metric(o){return '<article class="kpi-card"><div class="kpi-top"><span 
 function empty(t,m){return '<div class="empty-state">'+icon('search',26)+'<h3>'+esc(t)+'</h3><p>'+esc(m)+'</p><button class="btn btn-secondary btn-small" data-action="reset-filters">Reset filters</button></div>';}
 function chart(series){if(!series.length)return empty('No activity in this selection','Try a different programme, country or channel.');
 const W=1000,H=255,P={l:56,r:18,t:16,b:35};const hasContribution=series.every(x=>x.contribution!=null&&Number.isFinite(Number(x.contribution)));const all=series.flatMap(x=>hasContribution?[x.netSales,x.contribution]:[x.netSales]);const max=Math.max(1,...all)*1.13;const min=Math.min(0,...all);const x=i=>P.l+i*(W-P.l-P.r)/Math.max(1,series.length-1);const y=n=>P.t+(max-n)/(max-min)*(H-P.t-P.b);
-let s='<div class="chart-wrap"><svg viewBox="0 0 '+W+' '+H+'" role="img" aria-label="Daily net sales and profit before overheads in US dollars">';
+const inspection = chartInspection(series.map(p=>({
+  date:chartDate.format(new Date(p.date+'T12:00:00Z')),
+  values:[chartMoney(p.netSales),hasContribution?chartMoney(p.contribution):'Unavailable']
+})),['Net sales','Profit before overheads'],x,P.l,W-P.r,P.t,H-P.t-P.b);
+let s='<div class="chart-wrap" data-point-chart tabindex="0" role="group" aria-label="Daily sales and profit. Use the left and right arrows to inspect dates."><svg viewBox="0 0 '+W+' '+H+'" role="img" aria-label="Daily net sales and profit before overheads in US dollars">';
 for(let i=0;i<4;i++){const v=min+(max-min)*i/3,yy=y(v);s+='<line x1="'+P.l+'" y1="'+yy+'" x2="'+(W-P.r)+'" y2="'+yy+'" stroke="#e8ebef" stroke-dasharray="3 4"/><text x="'+(P.l-10)+'" y="'+(yy+4)+'" text-anchor="end" fill="#89929e" font-size="11">'+compact(v)+'</text>';}
 const path=key=>series.map((p,i)=>(i?'L':'M')+x(i).toFixed(1)+','+y(p[key]).toFixed(1)).join(' ');
 s+='<defs><linearGradient id="sales-fill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#f47735" stop-opacity=".18"/><stop offset="100%" stop-color="#f47735" stop-opacity="0"/></linearGradient></defs><path d="'+path('netSales')+' L'+x(series.length-1)+','+y(0)+' L'+x(0)+','+y(0)+' Z" fill="url(#sales-fill)"/><path d="'+path('netSales')+'" fill="none" stroke="#ed763b" stroke-width="2.6" stroke-linejoin="round"/>'+(hasContribution?'<path d="'+path('contribution')+'" fill="none" stroke="#506477" stroke-width="2.2" stroke-linejoin="round"/>':'');
-series.forEach((p,i)=>{s+='<circle cx="'+x(i)+'" cy="'+y(p.netSales)+'" r="3" fill="#fff" stroke="#ed763b" stroke-width="1.8"/>'+(hasContribution?'<circle cx="'+x(i)+'" cy="'+y(p.contribution)+'" r="2.5" fill="#506477"/>':'')+'<rect x="'+(x(i)-Math.max(6,(W-P.l-P.r)/series.length/2))+'" y="'+P.t+'" width="'+Math.max(12,(W-P.l-P.r)/series.length)+'" height="'+(H-P.t-P.b)+'" fill="transparent"><title>'+esc(p.date)+'\nNet sales: '+money(p.netSales)+'\nProfit before overheads: '+money(p.contribution)+'</title></rect>';});
+series.forEach((p,i)=>{s+='<circle cx="'+x(i)+'" cy="'+y(p.netSales)+'" r="3" fill="#fff" stroke="#ed763b" stroke-width="1.8"/>'+(hasContribution?'<circle cx="'+x(i)+'" cy="'+y(p.contribution)+'" r="2.5" fill="#506477"/>':'');});
 [...new Set([0,Math.round((series.length-1)*.25),Math.round((series.length-1)*.5),Math.round((series.length-1)*.75),series.length-1])].forEach(i=>{const label=new Intl.DateTimeFormat('en-GB',{day:'numeric',month:'short',timeZone:'UTC'}).format(new Date(series[i].date+'T12:00:00Z'));s+='<text x="'+x(i)+'" y="'+(H-8)+'" text-anchor="middle" fill="#89929e" font-size="11">'+esc(label)+'</text>';});
-return s+'</svg></div>';}
-window.BIUI={money,compact,number,percent,icon,escape:esc,metric,chart,empty,badge};
+return s+inspection.overlay+'</svg>'+inspection.tooltip+'</div>';}
+const chartCurrency = new Intl.NumberFormat('en-US',{style:'currency',currency:'USD'});
+const chartDate = new Intl.DateTimeFormat('en-GB',{day:'numeric',month:'short',year:'numeric',timeZone:'UTC'});
+function chartMoney(value){
+  return value==null||!Number.isFinite(Number(value))?'Unavailable':chartCurrency.format(value);
+}
+function chartInspection(points, labels, x, left, right, top, height){
+  const targets = points.map((point,i)=>{
+    const center = x(i), start = i===0?left:(x(i-1)+center)/2, end = i===points.length-1?right:(center+x(i+1))/2;
+    const values = point.values.map((value,index)=>'data-value'+index+'="'+esc(value)+'"').join(' ');
+    return '<rect class="ph-trend-hit" x="'+start+'" y="'+top+'" width="'+(end-start)+'" height="'+height+'" data-ph-trend-point="'+i+'" data-x="'+center+'" data-date="'+esc(point.date)+'" '+values+'/>';
+  }).join('');
+  const overlay = '<g aria-hidden="true"><line class="ph-trend-guide" y1="'+top+'" y2="'+(top+height)+'" visibility="hidden"/>'+targets+'</g>';
+  const tooltip = '<span class="ph-trend-tooltip chart-point-tooltip" hidden aria-hidden="true"><strong></strong>'+
+    labels.map((label,index)=>'<span class="chart-point-row"><span>'+esc(label)+'</span><span data-field="value'+index+'"></span></span>').join('')+
+    '</span><span class="sr-only" role="status" aria-atomic="true"></span>';
+  return {overlay,tooltip};
+}
+window.BIUI={money,compact,number,percent,icon,escape:esc,metric,chart,chartInspection,chartMoney,empty,badge};
 function persist(){try{localStorage.setItem(storageKey,JSON.stringify({clientProfitActions:local.clientProfitActions,competitorWatchlist:local.competitorWatchlist,competitorUpdates:local.competitorUpdates,competitorReviews:local.competitorReviews,payoutStatuses:local.payoutStatuses,riskStatuses:local.riskStatuses,notes:local.notes,compact:local.compact,showComparisons:local.showComparisons,flagRules:local.flagRules,ownerReviews:local.ownerReviews,businessUpdates:local.businessUpdates,radarRules:local.radarRules,radarReviews:local.radarReviews,riskRuleSettings:local.riskRuleSettings,riskRuleReviews:local.riskRuleReviews,consistencyRules:local.consistencyRules,retentionSettings:local.retentionSettings,payoutPatternSettings:{minAccounts:local.payoutPatternsMinAccounts,minClients:local.payoutPatternsMinClients,threshold:local.payoutPatternsThreshold}}));}catch(e){}}
 function currentPayouts(){return D.payouts.filter(p=>(filters.programme==='all'||p.programme===filters.programme)&&(filters.country==='all'||p.country===filters.country)&&(filters.channel==='all'||p.channel===filters.channel)&&(filters.size==='all'||String(p.accountSize)===String(filters.size))).map(p=>Object.assign({},p,{status:local.payoutStatuses[p.id]||p.status}));}
 function approved(){return currentPayouts().filter(p=>p.status==='Approved');}
@@ -11628,6 +11658,7 @@ document.documentElement.dataset.reportPrepMs=(computeStarted-renderStarted).toF
 const computeElapsed=performance.now()-computeStarted,domStarted=performance.now();
 document.getElementById('page-content').innerHTML=pageHtml;
 if(page==='pipeline')window.BIPayoutHistory.bindTrend(document.querySelector('#page-content .ph-chart-wrap'));
+document.querySelectorAll('#page-content [data-point-chart]').forEach(window.BIPayoutHistory.bindTrend);
 if(['challenge-outcomes','affiliate-value','product-migration','growth-concentration','free-coupon-campaign','pricing','marketing','rebuy','updates','ltv','client-profit','journey','profitable-risk','risk-radar','payout-exposure','payout-consistency'].includes(page))document.getElementById('page-content').insertAdjacentHTML('afterbegin','<button class="reports-back-link" data-page="reports">'+icon('arrow',14)+' All reports</button>');
 document.querySelector('.export-button').dataset.kind=retentionView?'retention':page==='journey'?'customers':monthlyRevenue?'monthly-cohorts':page==='ltv'?'owner-value':page==='affiliates'&&local.affiliatesView!=='reports'?'affiliate-growth':accountAnalyticsView?'account-analytics':page==='pipeline'?'payout-history':page==='payout-exposure'?'payout-patterns':page==='payout-consistency'?'consistency':page==='overview'&&local.ownerTab==='changes'?'changes':page;
 const presentationStarted=performance.now();if(window.BIProductionConnector&&window.BIProductionConnector.refreshPresentation)window.BIProductionConnector.refreshPresentation();
