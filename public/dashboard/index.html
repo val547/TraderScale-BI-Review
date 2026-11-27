@@ -12225,7 +12225,7 @@ else if(a==='menu'){document.querySelector('.sidebar').classList.add('open');doc
 else if(a==='close-menu')closeMenu();
 else if(a==='notifications'){openDrawer('Workspace activity',(D.demo===false?'Warehouse snapshot · '+D.asOf:'Offline activity · 25 Oct 2026'),'<div class="notification-list"><button class="record-link" data-page="pipeline"><span><strong>Historical payouts</strong><small>Inspect paid transactions and payout sources.</small></span>'+icon('arrow',16)+'</button><button class="record-link" data-page="rebuy"><span><strong>Breach → Rebuy report</strong><small>See return times and account-size choices.</small></span>'+icon('arrow',16)+'</button><button class="record-link" data-page="accounts"><span><strong>Account Analytics</strong><small>Inspect live account types, phases and results.</small></span>'+icon('arrow',16)+'</button></div>');}
 else if(a==='release-history')openReleaseHistory();
-else if(a==='about')openModal('A working preview of TraderScale BI','<div class="about-mark">'+icon('chart',26)+'</div><p>Explore the owner dashboard, account economics, historical payouts and customer return reports using realistic, fictional data.</p><ul class="about-list"><li>Filter reports and open individual records.</li><li>Try sample payout and risk review workflows.</li><li>Explore reward scenarios, customer rebuys and export demo reports.</li></ul><p class="muted">This portable v15 review copy uses fictional BI data through 25 October 2026 and illustrative competitor scenarios. It runs without sign-in or a server. Local actions do not change trading conditions or send payments. Where browser storage is available, edits stay on this browser and file; they are not synced. Use Review feedback to save page notes, then download the notes to share them. This file does not scan websites or run scheduled checks.</p>','<button class="btn btn-primary" data-action="close-overlay">Explore the prototype</button>');
+else if(a==='about')openModal('A working preview of TraderScale BI','<div class="about-mark">'+icon('chart',26)+'</div><p>Explore the owner dashboard, account economics, historical payouts and customer return reports using realistic, fictional data.</p><ul class="about-list"><li>Filter reports and open individual records.</li><li>Try sample payout and risk review workflows.</li><li>Explore reward scenarios, customer rebuys and export demo reports.</li></ul><p class="muted">This portable v15 review copy uses fictional BI data through 25 October 2026 and illustrative competitor scenarios. It runs without sign-in or a server. Local actions do not change trading conditions or send payments. Where browser storage is available, edits stay on this browser and file; they are not synced. Use Review feedback to save page notes and send them to Jane. This file does not scan websites or run scheduled checks.</p>','<button class="btn btn-primary" data-action="close-overlay">Explore the prototype</button>');
 });
 document.addEventListener('change',function(e){uiRevision++;const t=e.target;if(e.target.hasAttribute('data-affiliate-workspace-view')){
   const view=e.target.value;
@@ -12255,6 +12255,7 @@ if(window.BIProductionConnector&&window.BIProductionConnector.state&&window.BIPr
   const categories = ['Data', 'Workflow', 'Design', 'Missing feature', 'Bug'];
   const esc = value => String(value == null ? '' : value).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   let notes = [], reviewer = '', storageAvailable = true, deleted = null, context = {};
+  let screenshot = '', screenshotLibrary, sending = false;
   try {
     const saved = JSON.parse(localStorage.getItem(key) || '{}');
     notes = Array.isArray(saved.notes) ? saved.notes.filter(n => n && typeof n.text === 'string').map(n => ({id:String(n.id || ''), page:String(n.page || '#overview'), title:String(n.title || 'Report'), text:n.text.slice(0, 3000), reviewer:String(n.reviewer || '').slice(0, 100), priority:priorities.includes(n.priority)?n.priority:'Suggestion', category:categories.includes(n.category)?n.category:'Workflow', at:String(n.at || '')})) : [];
@@ -12282,7 +12283,7 @@ if(window.BIProductionConnector&&window.BIProductionConnector.state&&window.BIPr
   host.className = 'cpd-review-host';
   host.innerHTML = '<button type="button" class="cpd-review-launch" aria-haspopup="dialog" aria-controls="cpd-review-dialog"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M21 11a8 8 0 0 1-8 8H7l-5 3 1.5-6A8 8 0 1 1 21 11Z"/><path d="M7 8h9M7 12h6"/></svg> Review feedback <span class="cpd-review-count">0</span></button>' +
     '<dialog id="cpd-review-dialog" class="cpd-review-dialog" aria-labelledby="cpd-review-title"><header class="cpd-review-head"><div><span class="cpd-review-eyebrow">TRADERSCALE BI · INTERNAL</span><h2 id="cpd-review-title">Review feedback</h2></div><button type="button" class="cpd-review-close" aria-label="Close review feedback">×</button></header>' +
-    '<div class="cpd-review-content"><p class="cpd-review-intro">Record a bug or suggestion for the TraderScale team. Include what happened and what you expected. Copy or download your notes to share them with the team.</p>' +
+    '<div class="cpd-review-content"><p class="cpd-review-intro">Record a bug or suggestion for the TraderScale team. Include what happened and what you expected. Save your notes, then send them to Jane with a screenshot of this page.</p>' +
     '<p class="cpd-review-storage" role="status"></p><form class="cpd-review-form"><div class="cpd-review-context"></div>' +
     '<label class="cpd-review-label">Your name <span>(optional)</span><input name="reviewer" maxlength="100" autocomplete="name" placeholder="Operations review"></label>' +
     '<div class="cpd-review-fields"><label class="cpd-review-label">Priority<select name="priority">' + priorities.map(p => '<option>' + p + '</option>').join('') + '</select></label>' +
@@ -12290,28 +12291,72 @@ if(window.BIProductionConnector&&window.BIProductionConnector.state&&window.BIPr
     '<label class="cpd-review-label">Feedback<textarea name="feedback" rows="4" maxlength="3000" required placeholder="For example: In Payouts, changing the reporting period leaves the totals unchanged. I expected the totals to update."></textarea></label>' +
     '<div class="cpd-review-save-line"><span class="cpd-review-status" role="status" aria-live="polite"></span><button type="submit" class="cpd-review-primary">Save note</button></div></form>' +
     '<section class="cpd-review-saved" aria-label="Saved feedback notes"><div class="cpd-review-section-heading"><h3>Saved notes <span class="cpd-review-saved-count">0</span></h3><button type="button" class="cpd-review-undo" hidden>Undo removal</button></div><div class="cpd-review-notes"></div></section>' +
-    '<details class="cpd-review-copy"><summary>Copy feedback as text</summary><p>Select the text below to copy it into a message if downloading is unavailable.</p><textarea aria-label="All feedback as text" rows="8" readonly></textarea><button type="button" class="cpd-review-select">Select all text</button></details></div>' +
-    '<footer class="cpd-review-footer"><p>Sharing is manual. You can copy or download your notes.</p><button type="button" class="cpd-review-export">Download feedback (.txt)</button></footer></dialog>';
+    '<details class="cpd-review-copy"><summary>Copy feedback as text</summary><p>Select the text below to copy your saved notes.</p><textarea aria-label="All feedback as text" rows="8" readonly></textarea><button type="button" class="cpd-review-select">Select all text</button></details></div>' +
+    '<footer class="cpd-review-footer"><p>Jane receives your saved notes and a screenshot of this page.</p><button type="button" class="cpd-review-export">Send feedback to Jane</button></footer></dialog>';
   document.body.appendChild(host);
   const q = selector => host.querySelector(selector);
   const dialog = q('dialog'), form = q('form'), launcher = q('.cpd-review-launch');
   function render() {
     q('.cpd-review-count').textContent = String(notes.length);
     q('.cpd-review-saved-count').textContent = String(notes.length);
-    q('.cpd-review-storage').textContent = storageAvailable ? 'Notes are saved in this browser. Copy or download them to share with the team.' : 'This browser is not saving local data. Your notes work for this session; download them before closing this tab.';
-    q('.cpd-review-storage').classList.toggle('cpd-review-warning', !storageAvailable);
-    q('.cpd-review-export').disabled = !notes.length;
+    const storage = storageAvailable ? 'Notes are saved in this browser.' : 'Notes are only available in this session.';
+    q('.cpd-review-storage').textContent = !dialog.open ? storage : storage + (screenshot
+      ? ' A screenshot is ready to send with your notes.' : ' Close and reopen the form to retry the screenshot.');
+    q('.cpd-review-storage').classList.toggle('cpd-review-warning', !storageAvailable || (dialog.open && !screenshot));
+    q('.cpd-review-export').disabled = !notes.length || !screenshot || sending;
+    q('.cpd-review-export').textContent = sending ? 'Sending…' : 'Send feedback to Jane';
     q('.cpd-review-undo').hidden = !deleted;
     q('.cpd-review-copy textarea').value = buildText();
     q('.cpd-review-notes').innerHTML = notes.length ? notes.map((n, i) => '<article class="cpd-review-note"><div class="cpd-review-note-top"><strong>' + esc(n.title) + '</strong><button type="button" class="cpd-review-delete" data-note-id="' + esc(n.id) + '" aria-label="Remove note ' + (i + 1) + '">Remove</button></div><div class="cpd-review-note-meta"><span class="cpd-review-priority cpd-review-priority-' + n.priority.toLowerCase() + '">' + esc(n.priority) + '</span><span>' + esc(n.category) + '</span><span>' + esc(n.at.slice(0,10)) + '</span>' + (n.reviewer ? '<span>' + esc(n.reviewer) + '</span>' : '') + '</div><p>' + esc(n.text) + '</p></article>').join('') : '<div class="cpd-review-empty">No notes yet. Add the first one above.</div>';
   }
-  launcher.addEventListener('click', function () {
-    context = {page:location.hash || '#overview', title:(document.querySelector('main h1') || document.querySelector('h1'))?.textContent?.trim() || 'Report'};
+  function loadScreenshotLibrary() {
+    if (window.html2canvas) return Promise.resolve();
+    if (!screenshotLibrary) {
+      screenshotLibrary = new Promise((resolve, reject) => {
+        const script = document.createElement('script');
+        script.src = 'html2canvas.min.js?v=1.4.1';
+        script.onload = resolve;
+        script.onerror = () => { script.remove(); reject(new Error('Screenshot library unavailable.')); };
+        document.head.appendChild(script);
+      }).catch(error => { screenshotLibrary = null; throw error; });
+    }
+    return screenshotLibrary;
+  }
+  launcher.addEventListener('click', async function () {
+    const page = location.href;
+    context = {
+      page: location.hash || '#overview',
+      title: (document.querySelector('main h1') || document.querySelector('h1'))?.textContent?.trim() || 'Report',
+      url: page,
+      recordedAt: new Date().toISOString(),
+      browser: navigator.userAgent,
+      viewport: window.innerWidth + '×' + window.innerHeight + ' @' + (window.devicePixelRatio || 1) + 'x'
+    };
+    launcher.disabled = true;
+    launcher.setAttribute('aria-busy', 'true');
+    screenshot = '';
+    try {
+      await loadScreenshotLibrary();
+      if (page !== location.href) return;
+      const canvas = await window.html2canvas(document.documentElement, {
+        x: window.scrollX, y: window.scrollY, width: window.innerWidth, height: window.innerHeight,
+        scale: Math.min(window.devicePixelRatio || 1, 1.5), logging: false,
+        ignoreElements: element => element.classList?.contains('cpd-review-host')
+      });
+      if (page !== location.href) return;
+      const image = canvas.toDataURL('image/jpeg', 0.82);
+      if (image.startsWith('data:image/jpeg;base64,')) screenshot = image;
+    } catch (_) {
+      // Keep the existing form and saved notes accessible even when capture fails.
+    } finally {
+      launcher.disabled = false;
+      launcher.removeAttribute('aria-busy');
+    }
     q('.cpd-review-context').innerHTML = '<span>Feedback for</span><strong>' + esc(context.title) + '</strong>';
     form.elements.reviewer.value = reviewer;
     q('.cpd-review-status').textContent = '';
-    render();
     dialog.showModal();
+    render();
     form.elements.feedback.focus();
   });
   q('.cpd-review-close').addEventListener('click', () => dialog.close());
@@ -12326,7 +12371,7 @@ if(window.BIProductionConnector&&window.BIProductionConnector.state&&window.BIPr
     notes.push({id:'review-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2,7), ...context, text, reviewer, priority:form.elements.priority.value, category:form.elements.category.value, at:new Date().toISOString()});
     persist(); render();
     form.elements.feedback.value = '';
-    q('.cpd-review-status').textContent = storageAvailable ? 'Note saved.' : 'Note kept for this session. Please download it.';
+    q('.cpd-review-status').textContent = storageAvailable ? 'Note saved.' : 'Note kept for this session.';
     form.elements.feedback.focus();
   });
   form.elements.feedback.addEventListener('input', () => form.elements.feedback.setCustomValidity(''));
@@ -12345,14 +12390,32 @@ if(window.BIProductionConnector&&window.BIProductionConnector.state&&window.BIPr
     q('.cpd-review-status').textContent = 'Note restored.';
   });
   q('.cpd-review-select').addEventListener('click', function () { const area = q('.cpd-review-copy textarea'); area.focus(); area.select(); });
-  q('.cpd-review-export').addEventListener('click', function () {
-    if (!notes.length) return;
+  q('.cpd-review-export').addEventListener('click', async function () {
+    if (!notes.length || !screenshot || sending) return;
+    const latest = notes[notes.length - 1];
+    const status = q('.cpd-review-status');
+    sending = true;
+    status.textContent = 'Sending feedback to Jane…';
+    render();
     try {
-      const url = URL.createObjectURL(new Blob([buildText()], {type:'text/plain;charset=utf-8'}));
-      const link = document.createElement('a'); link.href = url; link.download = 'TraderScale-BI-feedback-' + new Date().toISOString().slice(0,10) + '.txt';
-      document.body.appendChild(link); link.click(); link.remove(); setTimeout(() => URL.revokeObjectURL(url),30000);
-      q('.cpd-review-status').textContent = 'Download requested. If it does not start, use “Copy feedback as text”.';
-    } catch (_) { q('.cpd-review-copy').open = true; q('.cpd-review-status').textContent = 'Use “Copy feedback as text” below to save your notes.'; }
+      const response = await fetch('/api/feedback', {
+        method: 'POST',
+        headers: {'content-type':'application/json'},
+        body: JSON.stringify({
+          pageTitle: context.title, pageUrl: context.url, recordedAt: context.recordedAt,
+          browser: context.browser, viewport: context.viewport, reviewer: latest.reviewer,
+          priority: latest.priority, category: latest.category, feedback: buildText(), screenshot
+        })
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok || !result.ok) throw new Error(result.error || 'Unable to send feedback. Please try again.');
+      status.textContent = 'Feedback sent to Jane. Reference: ' + result.reportId;
+    } catch (error) {
+      status.textContent = error.message || 'Unable to send feedback. Please try again.';
+    } finally {
+      sending = false;
+      render();
+    }
   });
   render();
 })();

@@ -14,6 +14,9 @@ const accessPassword = process.env.BI_ACCESS_PASSWORD || "";
 const googleClientId = process.env.GOOGLE_OAUTH_CLIENT_ID || "";
 const googleClientSecret = process.env.GOOGLE_OAUTH_CLIENT_SECRET || "";
 const appBaseUrl = (process.env.APP_BASE_URL || "").replace(/\/$/, "");
+const telegramBotToken = (process.env.TELEGRAM_BOT_TOKEN || "").trim();
+const telegramChatId = (process.env.TELEGRAM_CHAT_ID || "").trim();
+const feedbackProjectName = (process.env.FEEDBACK_PROJECT_NAME || "TraderScale BI Review").trim();
 const releaseId = process.env.RAILWAY_GIT_COMMIT_SHA || "local";
 const allowedGoogleEmails = (process.env.BI_ALLOWED_GOOGLE_EMAILS || "")
   .split(",")
@@ -261,13 +264,84 @@ async function googleIdentity(code: string) {
   return (identity.email || "").trim().toLowerCase();
 }
 
-async function readBody(request: IncomingMessage) {
-  let body = "";
+async function readBody(request: IncomingMessage, maxBytes = 4096) {
+  const chunks: Buffer[] = [];
+  let size = 0;
   for await (const chunk of request) {
-    body += chunk;
-    if (body.length > 4096) throw new Error("Request body too large.");
+    const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    size += bytes.length;
+    if (size > maxBytes) throw new Error("Request body too large.");
+    chunks.push(bytes);
   }
-  return body;
+  return Buffer.concat(chunks, size).toString("utf8");
+}
+
+function feedbackText(value: unknown, maxLength: number) {
+  return String(value == null ? "" : value).replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, "").trim().slice(0, maxLength);
+}
+
+async function sendTelegramFeedback(input: Record<string, unknown>) {
+  if (!telegramBotToken || !telegramChatId) throw new Error("Feedback delivery is not configured yet.");
+  const screenshot = feedbackText(input.screenshot, 8_500_000);
+  const imageMatch = /^data:image\/(png|jpeg);base64,([A-Za-z0-9+/=]+)$/.exec(screenshot);
+  if (!imageMatch) throw new Error("A valid screenshot is required.");
+  const image = Buffer.from(imageMatch[2], "base64");
+  if (!image.length || image.byteLength > 6_000_000) throw new Error("The screenshot is too large.");
+
+  const reportId = `TS-${Date.now().toString(36).toUpperCase()}-${randomBytes(2).toString("hex").toUpperCase()}`;
+  const reviewer = feedbackText(input.reviewer, 100) || "Not specified";
+  const priority = feedbackText(input.priority, 40) || "Suggestion";
+  const category = feedbackText(input.category, 60) || "Other";
+  const pageTitle = feedbackText(input.pageTitle, 180) || "Unknown page";
+  const pageUrl = feedbackText(input.pageUrl, 800) || "Not available";
+  const feedback = feedbackText(input.feedback, 8_750_000);
+  const recordedAt = feedbackText(input.recordedAt, 60) || new Date().toISOString();
+  const browser = feedbackText(input.browser, 300) || "Not available";
+  const viewport = feedbackText(input.viewport, 80) || "Not available";
+  if (!feedback) throw new Error("Feedback text is required.");
+
+  const message = [
+    `New feedback · ${reportId}`,
+    `Project: ${feedbackProjectName}`,
+    `Page: ${pageTitle}`,
+    `URL: ${pageUrl}`,
+    `From: ${reviewer}`,
+    `Priority: ${priority}`,
+    `Category: ${category}`,
+    `Time: ${recordedAt}`,
+    `Viewport: ${viewport}`,
+    `Browser: ${browser}`,
+    "",
+    feedback,
+  ].join("\n");
+
+  const form = new FormData();
+  form.set("chat_id", telegramChatId);
+  const png = imageMatch[1] === "png";
+  const photo = new Blob([image], { type: png ? "image/png" : "image/jpeg" });
+  const filename = `feedback-${reportId}.${png ? "png" : "jpg"}`;
+  const method = message.length <= 1024 ? "sendPhoto" : "sendMediaGroup";
+  if (method === "sendPhoto") {
+    form.set("caption", message);
+    form.set("photo", photo, filename);
+  } else {
+    form.set("screenshot", photo, filename);
+    form.set("notes", new Blob([message], { type: "text/plain;charset=utf-8" }), `feedback-${reportId}.txt`);
+    form.set("media", JSON.stringify([
+      { type: "document", media: "attach://screenshot", caption: `New feedback · ${reportId}` },
+      { type: "document", media: "attach://notes" },
+    ]));
+  }
+  try {
+    const response = await fetch(`https://api.telegram.org/bot${telegramBotToken}/${method}`, {
+      method: "POST", body: form, signal: AbortSignal.timeout(15_000),
+    });
+    const result = await response.json() as { ok?: boolean };
+    if (!response.ok || !result.ok) throw new Error();
+  } catch {
+    throw new Error("Telegram could not receive the feedback. Your notes are still saved. Please try again.");
+  }
+  return reportId;
 }
 
 function staticPath(pathname: string) {
@@ -408,6 +482,21 @@ const server = createServer(async (request, response) => {
       send(response, 204, "");
     } catch {
       send(response, 400, JSON.stringify({ error: "Invalid performance sample." }), "application/json; charset=utf-8");
+    }
+    return;
+  }
+
+  if (url.pathname === "/api/feedback" && request.method === "POST") {
+    try {
+      if (!request.headers["content-type"]?.startsWith("application/json")) throw new Error("Expected JSON feedback.");
+      const input = JSON.parse(await readBody(request, 8_750_000)) as Record<string, unknown>;
+      const reportId = await sendTelegramFeedback(input);
+      send(response, 200, JSON.stringify({ ok: true, reportId }), "application/json; charset=utf-8");
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : "Unable to send feedback.";
+      console.error("Feedback delivery failed", detail);
+      send(response, detail === "Feedback delivery is not configured yet." ? 503 : 400,
+        JSON.stringify({ error: detail }), "application/json; charset=utf-8");
     }
     return;
   }
