@@ -61,6 +61,16 @@ const campaign = window.BIFreeCouponCampaign.getReport(ctx({}));
 assert.equal(campaign.rows.length, 1, 'Ambiguous first coupons must not enter either campaign.');
 assert.equal(campaign.rows[0].lag, 86400000);
 assert.equal(campaign.rows[0].ltv, 7500);
+const campaignWithVariants={...data,productionCheckoutOrders:[...orders,
+  checkout('free-variant','variant-lead','2026-07-09T10:00:00Z',{checkoutTotal:0,checkoutDiscount:100,netRevenue:0,netRevenueEligible:false,couponCodes:['NW5K-VIP']})
+]};
+const campaignState={...ctx({freeCouponCampaign:'NW5K',freeCouponCode:'NW5K'}),data:campaignWithVariants};
+assert.deepEqual(window.BIFreeCouponCampaign.getReport(campaignState).groups.map(group=>group.code),['NW5K','NW5K-VIP']);
+const campaignHtml=window.BIFreeCouponCampaign.render(campaignState);
+assert.doesNotMatch(campaignHtml,/data-free-coupon-control="code"/);
+assert.match(campaignHtml,/data-free-coupon-control="campaign"/);
+assert.match(campaignHtml,/data-free-coupon-control="month"/);
+assert.match(campaignHtml,/Campaign \/ first coupon/);
 
 const challenges = window.BIChallengeOutcomes.getReport(ctx({}));
 assert.equal(challenges.counts.started, 1);

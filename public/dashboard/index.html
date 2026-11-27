@@ -10887,23 +10887,21 @@ if (location.protocol === 'file:') document.documentElement.classList.remove('pr
     const campaignRows=all.filter(row=>campaign==='all'||row.campaign===campaign);
     const codes=[...new Set(campaignRows.map(row=>row.code))].sort();
     const months=[...new Set(campaignRows.map(row=>row.month))].sort().reverse();
-    const code=codes.includes(l.freeCouponCode)?l.freeCouponCode:'all', month=months.includes(l.freeCouponMonth)?l.freeCouponMonth:'all';
-    const rows=campaignRows.filter(row=>(code==='all'||row.code===code)&&(month==='all'||row.month===month));
-    const activeCodes=code==='all'?codes:[code];
-    const groups=activeCodes.map(code=>({code,...summarize(rows.filter(row=>row.code===code))})).filter(group=>group.total);
+    const month=months.includes(l.freeCouponMonth)?l.freeCouponMonth:'all';
+    const rows=campaignRows.filter(row=>month==='all'||row.month===month);
+    const groups=codes.map(code=>({code,...summarize(rows.filter(row=>row.code===code))})).filter(group=>group.total);
     const campaigns=CAMPAIGNS.map(campaign=>({campaign,...summarize(rows.filter(row=>row.campaign===campaign))})).filter(group=>group.total);
     const windows=WINDOWS.map(days=>{
       const mature=rows.filter(row=>row.free.at+days*DAY<=cutoff);
       return {days,total:mature.length,paid:mature.filter(row=>row.lag!=null&&row.lag<=days*DAY).length};
     });
-    return {cutoff,campaign,campaigns,code,month,codes,months,rows,groups,windows,...summarize(rows)};
+    return {cutoff,campaign,campaigns,month,months,rows,groups,windows,...summarize(rows)};
   }
 
   function controls(ctx,r) {
     const u=ctx.ui;
     return '<div class="panel co-controls"><label class="co-field">Campaign<select data-free-coupon-control="campaign">'+option(u,'all','All campaigns',r.campaign)+
-      CAMPAIGNS.map(campaign=>option(u,campaign,campaign,r.campaign)).join('')+'</select></label><label class="co-field">First coupon<select data-free-coupon-control="code">'+option(u,'all','All coupon variants',r.code)+
-      r.codes.map(code=>option(u,code,code,r.code)).join('')+'</select></label><label class="co-field">Free-account month<select data-free-coupon-control="month">'+
+      CAMPAIGNS.map(campaign=>option(u,campaign,campaign,r.campaign)).join('')+'</select></label><label class="co-field">Free-account month<select data-free-coupon-control="month">'+
       option(u,'all','All demo months',r.month)+r.months.map(month=>option(u,month,monthFmt.format(new Date(month+'-01T00:00:00Z')),r.month)).join('')+'</select></label>'+
       '<button type="button" class="text-link" data-action="free-coupon-method">How this is measured '+u.icon('info',14)+'</button></div>';
   }
@@ -11017,10 +11015,9 @@ if (location.protocol === 'file:') document.documentElement.classList.remove('pr
   }
   function onChange(el,ctx) {
     const key=el.dataset.freeCouponControl,l=ctx.local;
-    const fields={campaign:'freeCouponCampaign',code:'freeCouponCode',month:'freeCouponMonth',outcome:'freeCouponOutcome',search:'freeCouponSearch'};
+    const fields={campaign:'freeCouponCampaign',month:'freeCouponMonth',outcome:'freeCouponOutcome',search:'freeCouponSearch'};
     if(!Object.hasOwn(fields,key)) return {rerender:false};
-    if(key==='campaign'||key==='code'||key==='month') resetRecords(l);
-    if(key==='campaign') delete l.freeCouponCode;
+    if(key==='campaign'||key==='month') resetRecords(l);
     l[fields[key]]=el.value;l.freeCouponPage=0;
     return {rerender:true};
   }
