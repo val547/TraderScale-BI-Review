@@ -538,7 +538,7 @@
         var groups = {};
         data.filterAccounts(filters).forEach(function (row) {
         var name = row[key];
-        if (!groups[name]) groups[name] = { name: name, accounts: 0, active: 0, funded: 0, breached: 0, netSales: 0, contribution: null, realizedPnl: 0, openPnl: 0, payoutAccrued: 0, approvedPayouts: 0, highRisk: 0 };
+        if (!groups[name]) groups[name] = { name: name, accounts: 0, active: 0, funded: 0, breached: 0, netSales: 0, contribution: null, realizedPnl: 0, openPnl: 0, payoutAccrued: 0, approvedPayouts: 0, awaitingPayment: 0, highRisk: 0 };
         var group = groups[name], order = orderMap[row.orderId];
         group.accounts += 1;
         if (row.status === 'Active') group.active += 1;
@@ -549,6 +549,7 @@
         group.openPnl += Number(row.openPnl) || 0;
         group.payoutAccrued += Number(row.payoutAccrued) || 0;
         group.approvedPayouts += Number(row.payoutApproved) || 0;
+        group.awaitingPayment = group.awaitingPayment === null || row.awaitingPayment == null ? null : group.awaitingPayment + row.awaitingPayment;
         if (row.status === 'Active' && row.riskLevel === 'High') group.highRisk += 1;
         });
         return Object.keys(groups).map(function (keyName) { return groups[keyName]; });
@@ -784,6 +785,32 @@
     }
   }
 
+
+  function accountAwaitingPayments(data, quality) {
+    if (!quality?.withdrawableReady || !Array.isArray(data.withdrawable?.accounts) || data.payouts.some(row => row.status === 'Approved' && typeof row.sourceStatus !== 'string')) return null;
+    const pendingByAccount = new Map();
+    data.withdrawable.accounts.forEach(function (row) {
+      if (!row.accountId || !row.pendingPayoutId || !(Number(row.pendingPayout) > 0)) return;
+      const id = String(row.accountId);
+      if (!pendingByAccount.has(id)) pendingByAccount.set(id, new Set());
+      pendingByAccount.get(id).add(String(row.pendingPayoutId));
+    });
+    const amounts = new Map(), seen = new Set();
+    data.payouts.forEach(function (row) {
+      if (!row.id || !row.accountId || row.sourceStatus !== 'approved' || row.payoutType !== 'trader' || seen.has(row.id)) return;
+      seen.add(row.id);
+      const id = String(row.accountId);
+      const amount = row.approvedShare;
+      if (!pendingByAccount.get(id)?.has(String(row.id)) ||
+          !row.approvedAt || row.payoutCurrency !== 'USD' || typeof amount !== 'number' || !Number.isFinite(amount) || amount < 0) {
+        amounts.set(id, null);
+      } else if (amounts.get(id) !== null) {
+        amounts.set(id, (amounts.get(id) || 0) + amount);
+      }
+    });
+    return amounts;
+  }
+
   function applySnapshot(payload) {
     if (!validSnapshot(payload) || !window.BIData) return false;
     var data = payload.data;
@@ -804,7 +831,10 @@
       if (row.accountId) withdrawableByAccount[String(row.accountId)] = row;
       if (row.accountNr) withdrawableByAccount['login:' + String(row.accountNr)] = row;
     });
+    const awaiting = accountAwaitingPayments(data, payload.quality);
     var liveAccounts = data.accounts.map(function (account) {
+      const id = String(account.id);
+      account.awaitingPayment = awaiting ? (awaiting.has(id) ? awaiting.get(id) : 0) : null;
       var released = withdrawableByAccount[String(account.id)] || withdrawableByAccount['login:' + String(account.login)] || null;
       if (!released) return account;
       return Object.assign(account, {

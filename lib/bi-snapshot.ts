@@ -305,7 +305,7 @@ ORDER BY a.updated_at DESC
 const PAYOUTS_SQL = `
 WITH latest_payouts AS (
   SELECT payout_id, payout_nr, customer_id, account_id, account_num,
-    LOWER(TRIM(status)) AS status, request_amount, share_amount,
+    LOWER(TRIM(status)) AS status, request_amount, share_amount, payout_type,
     account_currency, account_plan, account_plan_category_name,
     approved_at, created_at, updated_at
   FROM \`trader-scale-486213.trader_scale.src_payouts\`
@@ -345,7 +345,7 @@ SELECT p.payout_id, p.payout_nr, p.customer_id,
   COALESCE(cc.commerce_customer_key, p.customer_id) AS commerce_customer_key,
   c.full_name AS customer_name, c.country, p.account_id,
   CAST(p.account_num AS STRING) AS account_login, p.status,
-  p.request_amount, p.share_amount, p.account_currency,
+  p.request_amount, p.share_amount, p.account_currency, p.payout_type,
   p.account_plan, p.account_plan_category_name,
   a.platform, d.start_balance,
   p.created_at AS requested_at, p.approved_at, p.updated_at
@@ -835,6 +835,8 @@ export async function buildSnapshot(serviceAccountJson: string) {
       country: text(row.country, "Unknown"), channel: affiliateId ? "Affiliate" : "Unknown",
       amount: number(row.share_amount || row.request_amount), requestedAt: date(row.requested_at),
       status, method: "Restricted", approvedAt,
+      sourceStatus: text(row.status).trim().toLowerCase(), payoutType: text(row.payout_type).trim().toLowerCase(),
+      payoutCurrency: text(row.account_currency).trim().toUpperCase(), approvedShare: optionalNumber(row.share_amount),
       paidAt: status === "Paid" ? date(row.updated_at) : "",
       rejectedAt,
       decisionAt: approvedAt || rejectedAt,
