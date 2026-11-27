@@ -549,13 +549,12 @@ body.overlay-open{overflow:hidden}.drawer-header p{font-size:11px;color:#8f9caa;
 .ph-chart-wrap{position:relative;padding:0 20px 3px}
 .ph-chart-wrap:focus-visible{outline:2px solid #d89569;outline-offset:-3px;border-radius:6px}
 .ph-chart-wrap svg{width:100%;max-height:265px;display:block;overflow:visible}
-.ph-trend-hit{fill:transparent;cursor:crosshair}
+.ph-trend-hit{fill:transparent;cursor:crosshair;pointer-events:all}
 .ph-trend-guide{stroke:#75899e;stroke-width:1;stroke-dasharray:3 3;pointer-events:none}
 .ph-trend-tooltip{position:absolute;z-index:2;pointer-events:none;min-width:min(210px,calc(100% - 16px));max-width:calc(100% - 16px);padding:10px 12px;border:1px solid #dce4ec;border-radius:8px;background:#fff;color:#465c70;box-shadow:0 4px 14px #24384f1a;font-size:11px;font-variant-numeric:tabular-nums}
 .ph-trend-tooltip>strong{display:block;margin-bottom:5px;color:#23364a;font-size:12px}
 .ph-trend-tooltip dl{margin:0}
 [data-point-chart]{position:relative}
-[data-point-chart] .ph-trend-hit{pointer-events:all}
 [data-point-chart]:focus-visible{outline:2px solid #d89569;outline-offset:-3px;border-radius:6px}
 .chart-point-tooltip{text-align:left;font-weight:400}
 .chart-point-row{display:flex;justify-content:space-between;gap:14px;padding-top:3px}
@@ -8539,16 +8538,17 @@ if (location.protocol === 'file:') document.documentElement.classList.remove('pr
   function trendTooltip(u, points, x, top, height, left, right, monthly, count) {
     const fields = [['amount','Payout amount'], ['payments','Payout count']];
     if (!count) fields.push(['revenue','Net revenue'], ['ratio','Payout / revenue']);
+    const hitPadding = 4; // Include the full markers on the edges of the plot.
     const targets = points.map((point, i) => {
       const center = x(i);
-      const start = i === 0 ? left : (x(i-1) + center) / 2;
-      const end = i === points.length - 1 ? right : (center + x(i+1)) / 2;
+      const start = i === 0 ? left - hitPadding : (x(i-1) + center) / 2;
+      const end = i === points.length - 1 ? right + hitPadding : (center + x(i+1)) / 2;
       const values = {
         amount:exactMoney(point.amount), payments:u.number(point.payments),
         revenue:point.revenueKnown ? exactMoney(point.revenue) : 'Unavailable',
         ratio:point.ratio.value == null ? 'Unavailable' : point.ratio.value.toFixed(2) + '%'
       };
-      return '<rect class="ph-trend-hit" x="'+start+'" y="'+top+'" width="'+(end-start)+'" height="'+height+
+      return '<rect class="ph-trend-hit" x="'+start+'" y="'+(top-hitPadding)+'" width="'+(end-start)+'" height="'+(height+2*hitPadding)+
         '" data-ph-trend-point="'+i+'" data-x="'+center+'" data-date="'+u.escape(monthly ? rangeText([point.from,point.to]) : dateLabel(point.from))+'" '+
         fields.map(([key]) => 'data-'+key+'="'+u.escape(values[key])+'"').join(' ')+'/>';
     }).join('');
