@@ -126,4 +126,38 @@ assert.deepEqual(testWindow.BIPayoutHistory.onAction('payout-history-all-plans',
 assert.deepEqual(navigation.local, { payoutHistoryDimension: 'programme', payoutHistorySort: 'amount',
   payoutHistorySearch: '', payoutHistoryPage: 0, payoutHistoryAffiliate: 'partner' });
 
+
+const financialWindow={};
+const orders=[
+  {id:'store:1',customerId:'a',date:'2026-01-15',status:'completed',grossSales:120,discount:0,netSales:120},
+  {id:'store:2',customerId:'b',date:'2026-02-05',status:'completed',grossSales:80,discount:0,netSales:80},
+  {id:'store:3',customerId:'a',date:'2026-04-01',status:'completed',grossSales:55,discount:0,netSales:55},
+];
+const paid={id:'payout',customerId:'a',amount:60,paidDate:'2026-03-06'};
+const parent={
+  source:{orders,customers:[]},current:[paid],ledger:{rows:[paid]},totals:{payments:1,amount:60},
+  revenue:{available:true,current:{rows:orders,known:true,invalidDates:0}},
+  filters:{},state:{affiliate:'all',trafficType:'all'},scopeCoverage:{paid:{current:{count:0}}},
+  windows:{asOf:'2026-05-01',current:['2026-01-01','2026-02-28'],currentLabel:'Jan–Feb 2026'},
+};
+financialWindow.BIPayoutHistory={getReport:()=>parent};
+new Function('window',cohortSource)(financialWindow);
+const model=financialWindow.BIPayoutCohorts;
+const commission=(orderId,date,amount,extra={})=>({storeId:'store',orderId,date,amount,amountKnown:true,componentType:'commission',...extra});
+const ctx={ui,local:{},data:{demo:false,productionQuality:{affiliatePnlReady:true},affiliatePnl:[
+  commission('1','2026-02-01',12),commission('3','2026-04-02',5.5),commission('3','2026-04-03',-1),
+  commission('3','2026-05-02',99),commission('999','2026-04-02',500),commission('1','2026-04-02',60,{componentType:'payout'}),
+]}};
+const fields=row=>[row.TotalSalesUSD,row.AffiliateCommissionUSD,row.PaidPayoutsUSD,row.PnLUSD];
+assert.deepEqual(model.exportFinancialRows(ctx).map(fields),[[175,16.5,60,98.5],[80,0,0,80]]);
+assert.match(model.renderFinancialReport(ctx),/>Total Sales<\/th>.*>Affiliate Commission<\/th>.*>P&L<\/th>/);
+assert.doesNotMatch(model.render(ctx,parent),/>Total Sales<\/th>|>Affiliate Commission<\/th>|>P&L<\/th>/);
+assert.deepEqual(model.exportRows(ctx).map(row=>row.PaidPayoutsUSD),[60]);
+const unknown={id:'unknown',customerId:'unverified',paidDate:'2026-04-10',amount:40};
+parent.current.push(unknown);parent.ledger.rows.push(unknown);parent.totals={payments:2,amount:100};
+assert.deepEqual(model.exportFinancialRows(ctx).map(fields),[[175,16.5,60,98.5],[80,0,0,80],[null,null,40,null]]);
+assert.match(model.renderFinancialReport(ctx),/Selected cohort total.*\$255\.00.*\$16\.50.*\$100\.00.*Unavailable/);
+ctx.data.affiliatePnl.push(commission('2','2026-03-01',0,{amountKnown:false}));
+assert.deepEqual(fields(model.exportFinancialRows(ctx)[1]),[80,null,0,null]);
+
 console.log('payout reporting period: acquisition-cohort filtering passed');
