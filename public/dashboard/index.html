@@ -769,6 +769,7 @@ body.overlay-open{overflow:hidden}.drawer-header p{font-size:11px;color:#8f9caa;
 
 </style>
 <style data-source="account-analytics.css">
+.aa-breakdown-controls{display:flex;align-items:center;justify-content:flex-end;flex-wrap:wrap;gap:8px}
 .aa-breakdown-table .aa-programme-toggle{gap:8px;font-weight:650;text-align:left}
 .aa-breakdown-table .aa-size-row td{background:#f8fafc}
 .aa-breakdown-table .aa-size-row:hover td{background:#f0f4f8}
@@ -7205,6 +7206,7 @@ if (location.protocol === 'file:') document.documentElement.classList.remove('pr
       sort:['profit','headroom','size','account'].includes(l.accountAnalyticsSort) ? l.accountAnalyticsSort : 'profit',
       page:safeInt(l.accountAnalyticsPage),
       breakdown:l.accountAnalyticsBreakdown === 'size' ? 'size' : 'programme',
+      breakdownOpen:l.accountAnalyticsBreakdownOpen === true,
       expandedProgrammes:l.accountAnalyticsExpandedProgrammes || [],
       listGroup:l.accountAnalyticsListGroup
     };
@@ -7346,11 +7348,14 @@ if (location.protocol === 'file:') document.documentElement.classList.remove('pr
         SEGMENTS.map(({key}) => '<td class="numeric">' + u.number(group.counts[key]) + '</td>').join('') +
         '<td><button type="button" class="row-action"' + scope + ' aria-label="View accounts for ' + u.escape(scopedLabel) + '">' + u.icon('arrow',14) + '</button></td></tr>';
     }
-    const rows = r.breakdown.map(group => groupRow(group) +
+    const rows = (r.state.breakdownOpen ? r.breakdown : []).map(group => groupRow(group) +
       (group.sizes && r.state.expandedProgrammes.includes(group.key) ? group.sizes.map(child => groupRow(child, group.key)).join('') : '')).join('');
+    const open=r.state.breakdownOpen;
     return '<section class="panel aa-breakdown"><div class="panel-header"><div><h2 class="panel-title">Where are the accounts?</h2><p class="panel-subtitle">' +
       (size ? 'Compare starting account sizes across challenge types' : 'Expand a challenge type to see its starting account sizes') +
-      '</p></div><div class="segmented" role="group" aria-label="Account analytics breakdown">' + [['programme','By challenge type'],['size','By account size']].map(([key,label]) => '<button data-action="account-analytics-breakdown" data-value="' + key + '" class="' + (key === r.state.breakdown ? 'active' : '') + '" aria-pressed="' + (key === r.state.breakdown) + '">' + label + '</button>').join('') + '</div></div><div class="table-wrap"><table class="data-table aa-breakdown-table"><thead><tr><th scope="col">' + (size ? 'Account size' : 'Challenge type') + '</th><th scope="col" class="numeric">Live</th><th scope="col" class="numeric">In profit</th><th scope="col" class="numeric">Profit & consistency clear<small>Funded only</small></th><th scope="col" class="numeric">Within 2% of a limit</th><th></th></tr></thead><tbody>' + rows + '</tbody></table>' + (!r.breakdown.length ? '<div class="aa-empty">No live accounts in this scope.</div>' : '') + '</div><div class="panel-footer">A profitable account can also be close to a daily loss limit. These columns can overlap.</div></section>';
+      '</p></div><div class="aa-breakdown-controls">' + (open?'<div class="segmented" role="group" aria-label="Account analytics breakdown">' + [['programme','By challenge type'],['size','By account size']].map(([key,label]) => '<button data-action="account-analytics-breakdown" data-value="' + key + '" class="' + (key === r.state.breakdown ? 'active' : '') + '" aria-pressed="' + (key === r.state.breakdown) + '">' + label + '</button>').join('') + '</div>':'') +
+      '<button type="button" class="btn btn-secondary btn-small aa-breakdown-toggle" data-action="account-analytics-breakdown-toggle" aria-controls="account-analytics-breakdown" aria-expanded="'+open+'">'+(open?'Hide breakdown':'Show breakdown')+'</button></div></div>'+
+      '<div id="account-analytics-breakdown"'+(open?'><div class="table-wrap"><table class="data-table aa-breakdown-table"><thead><tr><th scope="col">' + (size ? 'Account size' : 'Challenge type') + '</th><th scope="col" class="numeric">Live</th><th scope="col" class="numeric">In profit</th><th scope="col" class="numeric">Profit & consistency clear<small>Funded only</small></th><th scope="col" class="numeric">Within 2% of a limit</th><th></th></tr></thead><tbody>' + rows + '</tbody></table>' + (!r.breakdown.length ? '<div class="aa-empty">No live accounts in this scope.</div>' : '') + '</div><div class="panel-footer">A profitable account can also be close to a daily loss limit. These columns can overlap.</div>':' hidden>')+'</div></section>';
   }
 
   function consistencyCell(u,account) {
@@ -7436,6 +7441,10 @@ if (location.protocol === 'file:') document.documentElement.classList.remove('pr
       l.accountAnalyticsStage=d.value;l.accountAnalyticsSegment='live';l.accountAnalyticsSearch='';l.accountAnalyticsPage=0;
       delete l.accountAnalyticsListGroup;
       return {rerender:true,focus:'#account-analytics-list'};
+    }
+    if (action === 'account-analytics-breakdown-toggle') {
+      l.accountAnalyticsBreakdownOpen = l.accountAnalyticsBreakdownOpen !== true;
+      return {rerender:true,focus:'.aa-breakdown-toggle'};
     }
     if (action === 'account-analytics-breakdown') {l.accountAnalyticsBreakdown = d.value === 'size' ? 'size' : 'programme';return {rerender:true};}
     if (action === 'account-analytics-programme-toggle') {
