@@ -776,6 +776,7 @@ body.overlay-open{overflow:hidden}.drawer-header p{font-size:11px;color:#8f9caa;
 .aa-programme-toggle svg{color:#697e91;transform:rotate(-90deg)}
 .aa-programme-toggle[aria-expanded="true"] svg{transform:none}
 .aa-size-row .table-link{margin-inline-start:7px;padding-inline-start:15px;border-inline-start:1px solid #dbe3eb}
+.aa-platform-row .table-link{margin-inline-start:30px}
 .aa-page{display:grid;gap:20px}.aa-intro{display:flex;justify-content:space-between;align-items:center;gap:16px;flex-wrap:wrap}.aa-intro h2{font-size:20px;font-weight:650;letter-spacing:-.35px;margin:0 0 7px;color:#283743}.aa-intro p{font-size:12px;color:#7d8d9c;margin:0;line-height:1.7}.aa-intro .text-link{font-size:11px;display:inline-flex;gap:6px;align-items:center}
 .aa-accounts-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.aa-accounts-toggle{white-space:nowrap}.aa-accounts-toggle[aria-expanded="true"]>svg{transform:rotate(180deg)}.aa-accounts-collapsed .panel-header{margin-bottom:0;border-bottom:0}.aa-accounts-toggle:focus-visible,.aa-accounts:focus-visible{outline:2px solid #d8a17b;outline-offset:3px}.aa-accounts{scroll-margin-top:24px}
 .aa-kpis{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px}.aa-kpi{display:flex;flex-direction:column;align-items:stretch;text-align:left;background:#fff;border:1px solid #e0e7ed;border-radius:11px;padding:19px 18px 16px;min-width:0;transition:border-color .15s,box-shadow .15s}.aa-kpi:hover{border-color:#e3baa1;box-shadow:0 3px 12px #2e3d4910}.aa-kpi.active{border-color:#e7b08b;box-shadow:inset 0 3px #dc976a;background:#fffcfa}.aa-kpi-label{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;font-size:12px;font-weight:550;line-height:1.5;color:#62788b;min-height:36px}.aa-kpi-label svg{flex-shrink:0;margin-top:1px}.aa-kpi>strong{font-size:32px;font-weight:600;letter-spacing:-.8px;color:#2b4355;font-variant-numeric:tabular-nums;line-height:1.3;margin:9px 0}.aa-kpi-profit>strong,.aa-kpi-consistency>strong{color:#427e6b}.aa-kpi-drawdown>strong{color:#b57943}.aa-kpi>small{display:block;font-size:10px;line-height:1.7;color:#7b8d9d;min-height:35px}.aa-kpi-open{display:flex;align-items:center;gap:5px;font-size:10px;color:#a36f4f;margin-top:15px}.aa-context{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;font-size:11px;color:#8594a1;line-height:1.7;margin-top:-7px}.aa-context strong{color:#597084;font-weight:600}.aa-coverage,.aa-rule-note{display:flex;align-items:flex-start;gap:10px;font-size:11px;line-height:1.8;color:#7b8c9a;padding:13px 16px;border-radius:8px;border:1px solid #e6ecf1;background:#f6f9fb}.aa-coverage svg,.aa-rule-note>svg{flex-shrink:0;margin-top:3px}.aa-rule-note p{margin:0}.aa-rule-note strong{font-weight:600;color:#627b8d}.aa-rule-note .text-link{display:inline-flex;align-items:center;gap:5px;font-size:11px;margin-left:4px}
@@ -7214,6 +7215,7 @@ if (location.protocol === 'file:') document.documentElement.classList.remove('pr
       breakdown:l.accountAnalyticsBreakdown === 'size' ? 'size' : 'programme',
       breakdownOpen:l.accountAnalyticsBreakdownOpen === true,
       expandedProgrammes:l.accountAnalyticsExpandedProgrammes || [],
+      expandedSizes:l.accountAnalyticsExpandedSizes || [],
       listGroup:l.accountAnalyticsListGroup
     };
   }
@@ -7287,18 +7289,29 @@ if (location.protocol === 'file:') document.documentElement.classList.remove('pr
 
   const startingSize = account => number(account.accountSize) > 0 ? number(account.accountSize) : null;
   const sizeLabel = (ui,size) => size == null ? 'Size not recorded' : ui.money(size);
-  function breakdownGroups(accounts, bySize) {
+  const familyFor=account=>String(account.programmeFamily||account.programme||'').split(' · ')[0].trim()||'Not recorded';
+  const platformFor=account=>String(account.platform||'').trim()||
+    account.programme?.match(/ · (MT4|MT5|MatchTrader|cTrader)$/i)?.[1]||'Platform not recorded';
+  const sizeKey=(programme,size)=>JSON.stringify([programme,size]);
+  function breakdownGroups(accounts, dimension, nested=false) {
     const groups = new Map();
+    const keyFor={programme:familyFor,size:startingSize,platform:platformFor}[dimension];
     for (const account of accounts) {
-      const key = bySize ? startingSize(account) : account.programme || 'Not recorded';
+      const key = keyFor(account);
       if (!groups.has(key)) groups.set(key, []);
       groups.get(key).push(account);
     }
     const rows = Array.from(groups, ([key, items]) => ({
-      key, counts:countsFor(items), sizes:bySize ? null : breakdownGroups(items, true)
+      key, counts:countsFor(items),
+      sizes:dimension==='programme'?breakdownGroups(items,'size',true):null,
+      platforms:dimension==='size'&&nested?breakdownGroups(items,'platform'):null
     }));
-    return rows.sort(bySize ? (a,b) => (a.key ?? Infinity) - (b.key ?? Infinity)
+    return rows.sort(dimension==='size' ? (a,b) => (a.key ?? Infinity) - (b.key ?? Infinity)
       : (a,b) => b.counts.live - a.counts.live || a.key.localeCompare(b.key));
+  }
+  function inBreakdownGroup(account,group){
+    return !group||((!group.programme||group.programme===familyFor(account))&&
+      (!Object.hasOwn(group,'size')||group.size===startingSize(account))&&(!group.platform||group.platform===platformFor(account)));
   }
   function getReport(ctx) {
     const filters = ctx.filters || {}, state = stateFor(ctx), data = ctx.data;
@@ -7307,10 +7320,10 @@ if (location.protocol === 'file:') document.documentElement.classList.remove('pr
     const live = scoped.filter(account => account.status === 'Active' && LIVE_STAGES.includes(account.stage));
     const accounts = live.map(account => assess(account,ctx,shared.rules));
     const counts = countsFor(accounts), query = state.search.toLowerCase();
-    const rows = accounts.filter(account => (!state.listGroup || (state.listGroup.programme === (account.programme || 'Not recorded') && state.listGroup.size === startingSize(account))) && inStage(account,state.stage) && inSegment(account,state.segment) && (!query || [account.id,account.login,account.customerId,account.customerName,account.programme,account.country,account.stageInfo.categoryLabel,account.stageInfo.formatLabel,account.stageInfo.phaseLabel].join(' ').toLowerCase().includes(query)));
+    const rows = accounts.filter(account => inBreakdownGroup(account,state.listGroup) && inStage(account,state.stage) && inSegment(account,state.segment) && (!query || [account.id,account.login,account.customerId,account.customerName,account.programme,account.country,account.stageInfo.categoryLabel,account.stageInfo.formatLabel,account.stageInfo.phaseLabel].join(' ').toLowerCase().includes(query)));
     const value = (account,key) => key === 'headroom' ? account.closest ? account.closest.remainingPct : Infinity : key === 'profit' ? account.profit === null ? -Infinity : account.profit : number(account.accountSize) || 0;
     rows.sort((a,b) => state.sort === 'account' ? String(a.login || a.id).localeCompare(String(b.login || b.id)) : (state.sort === 'headroom' ? value(a,'headroom') - value(b,'headroom') : value(b,state.sort) - value(a,state.sort)) || String(a.id).localeCompare(String(b.id)));
-    const breakdown = breakdownGroups(accounts,state.breakdown === 'size');
+    const breakdown = breakdownGroups(accounts,state.breakdown);
     const pages = Math.max(1,Math.ceil(rows.length / PAGE_SIZE)), page = Math.min(state.page,pages - 1);
     const stageBreakdown=STAGE_CATEGORIES.map(category=>({...category,count:accounts.filter(account=>account.stageInfo.category===category.key).length})).map(category=>({...category,share:accounts.length?category.count/accounts.length*100:null}));
     const stageCoverage={recorded:accounts.filter(account=>account.stageInfo.source==='recorded').length,demo:accounts.filter(account=>account.stageInfo.source==='demo').length,unclassified:accounts.filter(account=>account.stageInfo.category==='unclassified').length};
@@ -7340,28 +7353,34 @@ if (location.protocol === 'file:') document.documentElement.classList.remove('pr
 
   function breakdown(ctx,r) {
     const u = ctx.ui, size = r.state.breakdown === 'size';
-    function groupRow(group, programme) {
-      const isProgramme = group.sizes !== null;
-      const label = isProgramme ? group.key : sizeLabel(u, group.key);
-      const scopedLabel = programme ? programme + ' · ' + label : label;
-      const scope = ' data-action="account-analytics-scope" data-dimension="' + (isProgramme ? 'programme' : 'size') +
-        '" data-value="' + u.escape(group.key ?? '') + '"' + (programme ? ' data-programme="' + u.escape(programme) + '"' : '');
-      const name = isProgramme
-        ? '<button type="button" class="table-link aa-programme-toggle" data-action="account-analytics-programme-toggle" data-value="' + u.escape(group.key) +
-          '" data-programme-key="' + u.escape(encodeURIComponent(group.key)) + '" aria-expanded="' + r.state.expandedProgrammes.includes(group.key) + '">' + u.icon('chevron',14) + u.escape(label) + '</button>'
-        : '<button type="button" class="table-link"' + scope + ' aria-label="View accounts for ' + u.escape(scopedLabel) + '">' + u.escape(label) + '</button>';
-      return (programme ? '<tr class="aa-size-row">' : '<tr>') + '<td>' + name + '</td>' +
-        SEGMENTS.map(({key}) => '<td class="numeric">' + u.number(group.counts[key]) + '</td>').join('') +
-        '<td><button type="button" class="row-action"' + scope + ' aria-label="View accounts for ' + u.escape(scopedLabel) + '">' + u.icon('arrow',14) + '</button></td></tr>';
+    function groupRow(group, level, programme, accountSize) {
+      const label=level==='size'?sizeLabel(u,group.key):group.key;
+      const scopedLabel=[programme,level==='platform'?sizeLabel(u,accountSize):null,label].filter(Boolean).join(' · ');
+      const scope=' data-action="account-analytics-scope" data-dimension="'+level+'" data-value="'+u.escape(group.key??'')+'"'+
+        (programme?' data-programme="'+u.escape(programme)+'"':'')+(level==='platform'?' data-size="'+u.escape(accountSize??'')+'"':'');
+      const key=group.sizes?group.key:group.platforms?sizeKey(programme,group.key):null;
+      const expanded=group.sizes?r.state.expandedProgrammes.includes(key):r.state.expandedSizes.includes(key);
+      const name=key!==null?
+        '<button type="button" class="table-link aa-programme-toggle" data-action="account-analytics-'+(group.sizes?'programme':'size')+'-toggle" data-value="'+u.escape(key)+
+        '" data-programme-key="'+u.escape(encodeURIComponent(key))+'" aria-expanded="'+expanded+'">'+u.icon('chevron',14)+u.escape(label)+'</button>':
+        '<button type="button" class="table-link"'+scope+' aria-label="View accounts for '+u.escape(scopedLabel)+'">'+u.escape(label)+'</button>';
+      const rowClass=level==='platform'?' class="aa-size-row aa-platform-row"':programme?' class="aa-size-row"':'';
+      return '<tr'+rowClass+'><td>'+name+'</td>'+
+        SEGMENTS.map(({key})=>'<td class="numeric">'+u.number(group.counts[key])+'</td>').join('')+
+        '<td><button type="button" class="row-action"'+scope+' aria-label="View accounts for '+u.escape(scopedLabel)+'">'+u.icon('arrow',14)+'</button></td></tr>';
     }
-    const rows = (r.state.breakdownOpen ? r.breakdown : []).map(group => groupRow(group) +
-      (group.sizes && r.state.expandedProgrammes.includes(group.key) ? group.sizes.map(child => groupRow(child, group.key)).join('') : '')).join('');
+    const rows=(r.state.breakdownOpen?r.breakdown:[]).map(group=>{
+      if(size)return groupRow(group,'size');
+      return groupRow(group,'programme')+(r.state.expandedProgrammes.includes(group.key)?group.sizes.map(child=>
+        groupRow(child,'size',group.key)+(r.state.expandedSizes.includes(sizeKey(group.key,child.key))?
+          child.platforms.map(platform=>groupRow(platform,'platform',group.key,child.key)).join(''):'')).join(''):'');
+    }).join('');
     const open=r.state.breakdownOpen;
     return '<section class="panel aa-breakdown"><div class="panel-header"><div><h2 class="panel-title">Where are the accounts?</h2><p class="panel-subtitle">' +
-      (size ? 'Compare starting account sizes across challenge types' : 'Expand a challenge type to see its starting account sizes') +
+      (size ? 'Compare starting account sizes across challenge types' : 'Expand a programme to see its account sizes and platforms') +
       '</p></div><div class="aa-breakdown-controls">' + (open?'<div class="segmented" role="group" aria-label="Account analytics breakdown">' + [['programme','By challenge type'],['size','By account size']].map(([key,label]) => '<button data-action="account-analytics-breakdown" data-value="' + key + '" class="' + (key === r.state.breakdown ? 'active' : '') + '" aria-pressed="' + (key === r.state.breakdown) + '">' + label + '</button>').join('') + '</div>':'') +
       '<button type="button" class="btn btn-secondary btn-small aa-breakdown-toggle" data-action="account-analytics-breakdown-toggle" aria-controls="account-analytics-breakdown" aria-expanded="'+open+'">'+(open?'Hide breakdown':'Show breakdown')+'</button></div></div>'+
-      '<div id="account-analytics-breakdown"'+(open?'><div class="table-wrap"><table class="data-table aa-breakdown-table"><thead><tr><th scope="col">' + (size ? 'Account size' : 'Challenge type') + '</th><th scope="col" class="numeric">Live</th><th scope="col" class="numeric">In profit</th><th scope="col" class="numeric">Profit & consistency clear<small>Funded only</small></th><th scope="col" class="numeric">Within 2% of a limit</th><th></th></tr></thead><tbody>' + rows + '</tbody></table>' + (!r.breakdown.length ? '<div class="aa-empty">No live accounts in this scope.</div>' : '') + '</div><div class="panel-footer">A profitable account can also be close to a daily loss limit. These columns can overlap.</div>':' hidden>')+'</div></section>';
+      '<div id="account-analytics-breakdown"'+(open?'><div class="table-wrap"><table class="data-table aa-breakdown-table"><thead><tr><th scope="col">' + (size ? 'Account size' : 'Programme / size / platform') + '</th><th scope="col" class="numeric">Live</th><th scope="col" class="numeric">In profit</th><th scope="col" class="numeric">Profit & consistency clear<small>Funded only</small></th><th scope="col" class="numeric">Within 2% of a limit</th><th></th></tr></thead><tbody>' + rows + '</tbody></table>' + (!r.breakdown.length ? '<div class="aa-empty">No live accounts in this scope.</div>' : '') + '</div><div class="panel-footer">A profitable account can also be close to a daily loss limit. These columns can overlap.</div>':' hidden>')+'</div></section>';
   }
 
   function consistencyCell(u,account) {
@@ -7385,6 +7404,7 @@ if (location.protocol === 'file:') document.documentElement.classList.remove('pr
     const parts = [u.number(r.rows.length) + ' matching account' + (r.rows.length === 1 ? '' : 's')];
     if (group?.programme) parts.push(u.escape(group.programme));
     if (group && Object.hasOwn(group, 'size')) parts.push(u.escape(sizeLabel(u, group.size)));
+    if (group?.platform) parts.push(u.escape(group.platform));
     parts.push('current snapshot ' + dayText(r.snapshot));
     return parts.join(' · ');
   }
@@ -7453,22 +7473,23 @@ if (location.protocol === 'file:') document.documentElement.classList.remove('pr
       return {rerender:true,focus:'.aa-breakdown-toggle'};
     }
     if (action === 'account-analytics-breakdown') {l.accountAnalyticsBreakdown = d.value === 'size' ? 'size' : 'programme';return {rerender:true};}
-    if (action === 'account-analytics-programme-toggle') {
-      const expanded=l.accountAnalyticsExpandedProgrammes || [];
-      l.accountAnalyticsExpandedProgrammes=expanded.includes(d.value)?expanded.filter(key=>key!==d.value):[...expanded,d.value];
-      return {rerender:true,focus:'.aa-programme-toggle[data-programme-key="' + encodeURIComponent(d.value) + '"]'};
+    if (action === 'account-analytics-programme-toggle' || action === 'account-analytics-size-toggle') {
+      const key=action==='account-analytics-programme-toggle'?'accountAnalyticsExpandedProgrammes':'accountAnalyticsExpandedSizes';
+      const expanded=l[key]||[];
+      l[key]=expanded.includes(d.value)?expanded.filter(value=>value!==d.value):[...expanded,d.value];
+      return {rerender:true,focus:'[data-action="'+action+'"][data-programme-key="'+encodeURIComponent(d.value)+'"]'};
     }
     if (action === 'account-analytics-scope') {
-      l.accountAnalyticsExpanded = true;
-      if (d.dimension === 'size' && d.programme) {
-        l.accountAnalyticsListGroup={programme:d.programme,size:Number(d.value)>0?Number(d.value):null};
-        l.accountAnalyticsPage=0;
-        return {rerender:true,focus:'#account-analytics-list'};
+      l.accountAnalyticsExpanded=true;
+      l.accountAnalyticsPage=0;
+      const size=value=>Number(value)>0?Number(value):null;
+      if(d.dimension==='programme')l.accountAnalyticsListGroup={programme:d.value};
+      else if(d.dimension==='platform')l.accountAnalyticsListGroup={programme:d.programme,size:size(d.size),platform:d.value};
+      else if(d.programme||!d.value)l.accountAnalyticsListGroup={programme:d.programme,size:size(d.value)};
+      else {
+        delete l.accountAnalyticsListGroup;
+        if((ctx.data.accountSizes||[]).map(String).includes(String(d.value)))ctx.filters.size=d.value;
       }
-      delete l.accountAnalyticsListGroup;
-      const key = d.dimension === 'size' ? 'size' : 'programme';
-      if (key === 'size' ? (ctx.data.accountSizes || []).map(String).includes(String(d.value)) : (ctx.data.programmes || []).includes(d.value)) ctx.filters[key] = d.value;
-      l.accountAnalyticsPage = 0;
       return {rerender:true,focus:'#account-analytics-list'};
     }
     if (action === 'account-analytics-page') {l.accountAnalyticsPage = safeInt(d.value);return {rerender:true};}

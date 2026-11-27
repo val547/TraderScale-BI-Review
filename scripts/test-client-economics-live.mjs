@@ -69,4 +69,29 @@ assert.deepEqual(accountContext.filters, filters, 'The nested group opens a scop
 analytics.onAction('account-analytics-clear', { dataset: {} }, accountContext);
 assert.equal(analytics.getReport(accountContext).rows.length, 3);
 
+
+const hierarchyContext={
+  ...accountContext,local:{},
+  data:{...accountContext.data,accounts:[
+    {...accounts[0],programme:'Speedy · 50K · MT4',programmeFamily:'Speedy',platform:'MT4'},
+    {...accounts[0],id:'A5',programme:'Speedy · 50K · MT5',programmeFamily:'Speedy',platform:'MT5'},
+    {...accounts[1],programme:'Speedy · 100K · MT5'},
+    {...accounts[2],programme:'Pro · 50K · MT5',programmeFamily:'Pro',platform:'MT5'},
+    {...accounts[0],id:'A-unknown',programmeFamily:'Speedy',accountSize:null}
+  ]}
+};
+const hierarchy=analytics.getReport(hierarchyContext);
+assert.deepEqual(hierarchy.breakdown.map(group=>[group.key,group.counts.live]),[['Speedy',4],['Pro',1]]);
+const sizes=hierarchy.breakdown[0].sizes;
+assert.deepEqual(sizes.map(group=>group.key),[50000,100000,null]);
+assert.deepEqual(sizes[0].platforms.map(group=>[group.key,group.counts.live]),[['MT4',1],['MT5',1]]);
+assert.equal(sizes[1].platforms[0].key,'MT5');
+assert.equal(sizes[2].platforms[0].key,'Platform not recorded');
+analytics.onAction('account-analytics-scope',{dataset:{dimension:'programme',value:'Speedy'}},hierarchyContext);
+assert.equal(analytics.getReport(hierarchyContext).rows.length,4);
+analytics.onAction('account-analytics-scope',{dataset:{dimension:'platform',programme:'Speedy',size:'50000',value:'MT5'}},hierarchyContext);
+assert.deepEqual(analytics.getReport(hierarchyContext).rows.map(row=>row.id),['A5']);
+assert.deepEqual(analytics.exportRows(hierarchyContext).map(row=>row.AccountId),['A5']);
+assert.deepEqual(hierarchyContext.filters,filters);
+
 console.log('Live client economics checks passed.');
